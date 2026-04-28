@@ -1,14 +1,14 @@
 import type { Config } from "../config/env";
 import type { Logger } from "../core/logger";
 import type { EventManager } from "../modules/monitoring/event-manager";
-import type { LaunchState } from "../modules/lifecycle/state/launch-state";
+import type { LaunchState } from "../modules/engines/layers/launch-state";
 import type { ControllerMetrics, MetricsRegistry } from "../modules/monitoring/metrics";
-import type { ProcessManager } from "../modules/lifecycle/process/process-manager";
-import type { LifecycleCoordinator } from "../modules/lifecycle/state/lifecycle-coordinator";
-import type { DownloadManager } from "../modules/downloads/manager";
+import type { ProcessManager } from "../modules/engines/layers/process-manager";
+import type { EngineCoordinator } from "../modules/engines/layers/engine-coordinator";
+import type { DownloadManager } from "../modules/engines/layers/download-manager";
 import type { ChatRunOptions, ChatRunStream } from "../modules/chat/agent/run-manager-types";
 import type { ChatStore } from "../modules/chat/store";
-import type { DownloadStore } from "../modules/downloads/store";
+import type { DownloadStore } from "../modules/engines/layers/download-store";
 import type { LifetimeMetricsStore, PeakMetricsStore } from "../modules/monitoring/metrics-store";
 import type { RecipeStore } from "../modules/lifecycle/recipes/recipe-store";
 import type { JobStore } from "../stores/job-store";
@@ -22,6 +22,9 @@ export interface IChatRunManager {
   startRun(options: ChatRunOptions): Promise<ChatRunStream>;
   abortRun(runId: string): boolean;
   abortRunsForModel(modelName: string): number;
+  resolveApproval(runId: string, toolCallId: string, approved: boolean, reason?: string): boolean;
+  continueRun(sessionId: string, runId: string): Promise<ChatRunStream>;
+  followUpRun(sessionId: string, content: string): Promise<ChatRunStream>;
 }
 
 /**
@@ -45,8 +48,8 @@ export interface AppContext {
   metrics: ControllerMetrics;
   metricsRegistry: MetricsRegistry;
   processManager: ProcessManager;
-  lifecycleCoordinator: LifecycleCoordinator;
   downloadManager: DownloadManager;
+  engineService: EngineCoordinator;
   runManager: IChatRunManager;
   jobManager: IJobManager;
   stores: {

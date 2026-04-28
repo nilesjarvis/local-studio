@@ -136,4 +136,20 @@ export function migrateChatStore(db: Database): void {
   ensureColumn(db, "chat_messages", "parts", "TEXT");
   ensureColumn(db, "chat_messages", "metadata", "TEXT");
   ensureColumn(db, "chat_runs", "updated_at", "TEXT");
+
+  // Pi Agent Phase 1: extended token tracking
+  ensureColumn(db, "chat_messages", "cache_read_tokens", "INTEGER");
+  ensureColumn(db, "chat_messages", "cache_write_tokens", "INTEGER");
+  ensureColumn(db, "chat_messages", "thinking_tokens", "INTEGER");
+  ensureColumn(db, "chat_messages", "provider_model_id", "TEXT");
+  ensureColumn(db, "chat_messages", "cost_json", "TEXT");
+
+  // Model pricing table for cost calculation
+  db.run(`
+    CREATE TABLE IF NOT EXISTS model_pricing (
+      model_id TEXT PRIMARY KEY,
+      provider TEXT,
+      pricing_json TEXT
+    )
+  `);
 }

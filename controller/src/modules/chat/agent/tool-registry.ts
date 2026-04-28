@@ -28,7 +28,12 @@ export const buildAgentTools = async (
   }
 
   if (options.agentMode) {
-    tools.push(...buildLocalTools(context, { sessionId: options.sessionId }));
+    const localOpts: { sessionId: string; approvalGate?: typeof options.approvalGate; runId?: string } = {
+      sessionId: options.sessionId,
+    };
+    if (options.approvalGate) localOpts.approvalGate = options.approvalGate;
+    if (options.runId) localOpts.runId = options.runId;
+    tools.push(...buildLocalTools(context, localOpts));
   }
 
   if (options.agentMode || options.agentFiles) {

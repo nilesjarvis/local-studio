@@ -24,7 +24,7 @@ import {
   savePersistedConfig,
   type ProviderConfig,
 } from "../../config/persisted-config";
-import { getVllmRuntimeInfo } from "../lifecycle/runtime/vllm-runtime";
+import { getVllmRuntimeInfo } from "../engines/layers/vllm-runtime";
 
 const getDiskInfo = (
   path: string

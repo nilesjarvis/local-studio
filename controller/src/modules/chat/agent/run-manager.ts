@@ -6,6 +6,7 @@ import { isMockInferenceEnabled } from "./run-manager-utilities";
 import type { ChatRunOptions, ChatRunStream } from "./run-manager-types";
 import { createRunRegistry, type RunRegistry } from "./run-registry";
 import { parseProviderModel } from "../../../services/provider-routing";
+import type { ApprovalGate } from "./tool-approval-gate";
 
 export type { ChatRunOptions, ChatRunStream } from "./run-manager-types";
 
@@ -69,6 +70,55 @@ export class ChatRunManager {
       aborted += 1;
     }
     return aborted;
+  }
+
+  /**
+   * Resolve a pending tool approval for a run.
+   * @param runId - Run identifier.
+   * @param toolCallId - Tool call identifier.
+   * @param approved - Whether the tool execution is approved.
+   * @param reason - Optional reason for the decision.
+   * @returns True if a pending approval was resolved.
+   */
+  public resolveApproval(
+    runId: string,
+    toolCallId: string,
+    approved: boolean,
+    reason?: string
+  ): boolean {
+    const active = this.activeRuns.getRun(runId);
+    if (!active?.approvalGate) return false;
+    return active.approvalGate.resolveApproval(toolCallId, { approved, reason });
+  }
+
+  /**
+   * Continue a previous run by re-prompting the agent.
+   * @param sessionId - Session identifier.
+   * @param runId - Run to continue.
+   * @returns New run id and stream iterable.
+   */
+  public async continueRun(sessionId: string, runId: string): Promise<ChatRunStream> {
+    const session = this.context.stores.chatStore.getSession(sessionId);
+    if (!session) throw new Error("Session not found");
+    if (isMockInferenceEnabled()) {
+      return createMockChatRun(this.context, session, { sessionId, content: "continue" }, "continue");
+    }
+    const stream = await createChatRun(this.context, this.activeRuns, {
+      sessionId,
+      content: "",
+      continuePreviousRun: true,
+    });
+    return stream;
+  }
+
+  /**
+   * Send a follow-up message in the context of a previous run.
+   * @param sessionId - Session identifier.
+   * @param content - Follow-up message content.
+   * @returns Run id and stream iterable.
+   */
+  public async followUpRun(sessionId: string, content: string): Promise<ChatRunStream> {
+    return this.startRun({ sessionId, content, followUpPreviousRun: true });
   }
 
   /**

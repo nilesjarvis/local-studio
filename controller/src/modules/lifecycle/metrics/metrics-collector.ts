@@ -1,7 +1,7 @@
 // CRITICAL
 import type { AppContext } from "../../../types/context";
 import { getGpuInfo } from "../platform/gpu";
-import { getSystemRuntimeInfo } from "../runtime/runtime-info";
+import { getSystemRuntimeInfo } from "../../engines/layers/runtime-info";
 import { delay } from "../../../core/async";
 import { listLogFiles, resolveExistingLogPath, tailFileLines } from "../../../core/log-files";
 import { fetchLocal } from "../../../http/local-fetch";
@@ -153,6 +153,7 @@ export const startMetricsCollector = (context: AppContext): (() => void) => {
   let lastLlamacppGenerationThroughput = 0;
   let sessionModelId: string | null = null;
   let sessionPeaks: SessionPeaks = emptyPeaks();
+  let metricsUnavailableUntil = 0;
 
   /**
    * Scrape Prometheus metrics from vLLM.
@@ -161,12 +162,19 @@ export const startMetricsCollector = (context: AppContext): (() => void) => {
    */
   const scrapeVllmMetrics = async (port: number): Promise<Record<string, number>> => {
     try {
+      if (Date.now() < metricsUnavailableUntil) {
+        return {};
+      }
       const response = await fetchLocal(port, "/metrics", {
         timeoutMs: METRICS_HTTP_TIMEOUT_MS,
       });
       if (response.status !== 200) {
+        if (response.status === 404) {
+          metricsUnavailableUntil = Date.now() + 60_000;
+        }
         return {};
       }
+      metricsUnavailableUntil = 0;
       const text = await response.text();
       const metrics: Record<string, number> = {};
       for (const line of text.split("\n")) {
@@ -284,6 +292,7 @@ export const startMetricsCollector = (context: AppContext): (() => void) => {
         if (sessionModelId !== modelId) {
           sessionModelId = modelId;
           sessionPeaks = emptyPeaks();
+          metricsUnavailableUntil = 0;
         }
 
         let promptThroughput = 0;

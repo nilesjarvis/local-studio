@@ -25,6 +25,8 @@ const BLOCKED_COMMAND_PATTERNS = [
 
 interface LocalToolOptions {
   sessionId: string;
+  approvalGate?: import("./tool-approval-gate").ApprovalGate;
+  runId?: string;
 }
 
 const sanitizeSessionId = (sessionId: string): string => {
@@ -333,6 +335,7 @@ const buildBrowserProbeCommand = (url: string): string =>
  * Build agent tools that execute directly on the local machine with a sandboxed working directory.
  */
 export const buildLocalTools = (context: AppContext, options: LocalToolOptions): AgentTool[] => {
+  const { approvalGate, runId, sessionId } = options;
   const sessionRoot = ensureSessionRoot(context, options.sessionId);
 
   const runCommandTool = async (
@@ -361,7 +364,24 @@ export const buildLocalTools = (context: AppContext, options: LocalToolOptions):
     label: AGENT_TOOL_NAMES.EXECUTE_COMMAND,
     description: "Execute a shell command on the backend machine.",
     parameters: COMMAND_TOOL_PARAMETERS,
-    execute: async (_toolCallId, params) => runCommandTool(params),
+    execute: async (toolCallId, params) => {
+      if (approvalGate && runId) {
+        const decision = await approvalGate.requestApproval({
+          toolCallId,
+          toolName: AGENT_TOOL_NAMES.EXECUTE_COMMAND,
+          args: asRecord(params),
+          runId,
+          sessionId,
+        });
+        if (!decision.approved) {
+          return createTextResult(
+            `Command execution denied${decision.reason ? `: ${decision.reason}` : ""}`,
+            { denied: true }
+          );
+        }
+      }
+      return runCommandTool(params);
+    },
   };
 
   const computerUse: AgentTool = {
@@ -370,7 +390,24 @@ export const buildLocalTools = (context: AppContext, options: LocalToolOptions):
     description:
       "Use the backend machine shell directly. Accepts the same payload as execute_command.",
     parameters: COMMAND_TOOL_PARAMETERS,
-    execute: async (_toolCallId, params) => runCommandTool(params),
+    execute: async (toolCallId, params) => {
+      if (approvalGate && runId) {
+        const decision = await approvalGate.requestApproval({
+          toolCallId,
+          toolName: AGENT_TOOL_NAMES.COMPUTER_USE,
+          args: asRecord(params),
+          runId,
+          sessionId,
+        });
+        if (!decision.approved) {
+          return createTextResult(
+            `Command execution denied${decision.reason ? `: ${decision.reason}` : ""}`,
+            { denied: true }
+          );
+        }
+      }
+      return runCommandTool(params);
+    },
   };
 
   const browserOpenUrl: AgentTool = {

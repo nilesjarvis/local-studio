@@ -92,6 +92,7 @@ export class ChatStore {
       .query(
         `SELECT id, role, content, model, tool_calls, tool_call_id, name, parts, metadata,
               request_prompt_tokens, request_tools_tokens, request_total_input_tokens, request_completion_tokens,
+              cache_read_tokens, cache_write_tokens, thinking_tokens, provider_model_id, cost_json,
               created_at
               FROM chat_messages WHERE session_id = ? ORDER BY created_at, rowid`
       )
@@ -216,18 +217,25 @@ export class ChatStore {
     parts?: unknown[],
     metadata?: unknown,
     toolCallId?: string,
-    name?: string
+    name?: string,
+    cacheReadTokens?: number,
+    cacheWriteTokens?: number,
+    thinkingTokens?: number,
+    providerModelId?: string,
+    costJson?: unknown
   ): ChatMessage {
     const toolCallsJson = toolCalls ? JSON.stringify(toolCalls) : null;
     const partsJson = parts ? JSON.stringify(parts) : null;
     const metadataJson =
       metadata !== undefined && metadata !== null ? JSON.stringify(metadata) : null;
+    const costJsonString = costJson ? JSON.stringify(costJson) : null;
     this.db
       .query(
         `INSERT INTO chat_messages
       (id, session_id, role, content, model, tool_calls, tool_call_id, name, parts, metadata,
-       request_prompt_tokens, request_tools_tokens, request_total_input_tokens, request_completion_tokens)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       request_prompt_tokens, request_tools_tokens, request_total_input_tokens, request_completion_tokens,
+       cache_read_tokens, cache_write_tokens, thinking_tokens, provider_model_id, cost_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         role = excluded.role,
         model = excluded.model,
@@ -240,7 +248,12 @@ export class ChatStore {
         request_prompt_tokens = excluded.request_prompt_tokens,
         request_tools_tokens = excluded.request_tools_tokens,
         request_total_input_tokens = excluded.request_total_input_tokens,
-        request_completion_tokens = excluded.request_completion_tokens`
+        request_completion_tokens = excluded.request_completion_tokens,
+        cache_read_tokens = excluded.cache_read_tokens,
+        cache_write_tokens = excluded.cache_write_tokens,
+        thinking_tokens = excluded.thinking_tokens,
+        provider_model_id = excluded.provider_model_id,
+        cost_json = excluded.cost_json`
       )
       .run(
         messageId,
@@ -256,7 +269,12 @@ export class ChatStore {
         promptTokens ?? null,
         toolsTokens ?? null,
         totalInputTokens ?? null,
-        completionTokens ?? null
+        completionTokens ?? null,
+        cacheReadTokens ?? null,
+        cacheWriteTokens ?? null,
+        thinkingTokens ?? null,
+        providerModelId ?? null,
+        costJsonString
       );
     this.db
       .query("UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?")
@@ -264,7 +282,8 @@ export class ChatStore {
     const row = this.db
       .query(
         `SELECT id, role, content, model, tool_calls, tool_call_id, name, parts, metadata,
-         request_prompt_tokens, request_tools_tokens, request_total_input_tokens, request_completion_tokens, created_at
+         request_prompt_tokens, request_tools_tokens, request_total_input_tokens, request_completion_tokens,
+         cache_read_tokens, cache_write_tokens, thinking_tokens, provider_model_id, cost_json, created_at
          FROM chat_messages WHERE id = ?`
       )
       .get(messageId) as Record<string, unknown>;
@@ -286,22 +305,97 @@ export class ChatStore {
               ELSE COALESCE(request_prompt_tokens, 0)
             END
           ) AS prompt_tokens,
-          SUM(COALESCE(request_completion_tokens, 0)) AS completion_tokens
+          SUM(COALESCE(request_completion_tokens, 0)) AS completion_tokens,
+          SUM(COALESCE(cache_read_tokens, 0)) AS cache_read_tokens,
+          SUM(COALESCE(cache_write_tokens, 0)) AS cache_write_tokens,
+          SUM(COALESCE(thinking_tokens, 0)) AS thinking_tokens
          FROM chat_messages
          WHERE session_id = ?`
       )
       .get(sessionId) as {
       prompt_tokens?: number | null;
       completion_tokens?: number | null;
+      cache_read_tokens?: number | null;
+      cache_write_tokens?: number | null;
+      thinking_tokens?: number | null;
     } | null;
 
     const prompt = Number(row?.prompt_tokens ?? 0);
     const completion = Number(row?.completion_tokens ?? 0);
+    const cacheRead = Number(row?.cache_read_tokens ?? 0);
+    const cacheWrite = Number(row?.cache_write_tokens ?? 0);
+    const thinking = Number(row?.thinking_tokens ?? 0);
+
+    // Aggregate cost_json across messages
+    const costRows = this.db
+      .query("SELECT cost_json FROM chat_messages WHERE session_id = ? AND cost_json IS NOT NULL")
+      .all(sessionId) as Array<{ cost_json: string }>;
+
+    let costDetails: Record<string, number> = {};
+    for (const row of costRows) {
+      try {
+        const parsed = JSON.parse(row.cost_json) as Record<string, number>;
+        for (const [key, val] of Object.entries(parsed)) {
+          costDetails[key] = (costDetails[key] ?? 0) + (typeof val === "number" ? val : 0);
+        }
+      } catch {
+        // skip unparseable cost
+      }
+    }
+
     return {
       prompt_tokens: prompt,
       completion_tokens: completion,
       total_tokens: prompt + completion,
+      cache_read_tokens: cacheRead,
+      cache_write_tokens: cacheWrite,
+      thinking_tokens: thinking,
+      estimated_cost: costDetails["total"] ?? undefined,
+      cost_details: Object.keys(costDetails).length > 0 ? costDetails : undefined,
     };
+  }
+
+  /**
+   * Upsert a model pricing record.
+   * @param modelId - Model identifier.
+   * @param provider - Provider name.
+   * @param pricingJson - Pricing object (per-million-token rates).
+   */
+  public upsertModelPricing(
+    modelId: string,
+    provider: string | null,
+    pricingJson: Record<string, number>
+  ): void {
+    const json = JSON.stringify(pricingJson);
+    this.db
+      .query(
+        "INSERT INTO model_pricing (model_id, provider, pricing_json) VALUES (?, ?, ?) ON CONFLICT(model_id) DO UPDATE SET provider = excluded.provider, pricing_json = excluded.pricing_json"
+      )
+      .run(modelId, provider ?? null, json);
+  }
+
+  /**
+   * Get pricing for a model.
+   * @param modelId - Model identifier.
+   * @returns Pricing record or null.
+   */
+  public getModelPricing(modelId: string): {
+    model_id: string;
+    provider: string | null;
+    pricing_json: Record<string, number>;
+  } | null {
+    const row = this.db
+      .query("SELECT model_id, provider, pricing_json FROM model_pricing WHERE model_id = ?")
+      .get(modelId) as { model_id: string; provider: string | null; pricing_json: string } | null;
+    if (!row) return null;
+    let pricing: Record<string, number> = {};
+    try {
+      pricing = JSON.parse(row.pricing_json) as Record<string, number>;
+    } catch {
+      // return null on unparseable pricing
+      return null;
+    }
+    return { ...row, pricing_json: pricing };
   }
 
   /**
@@ -354,8 +448,9 @@ export class ChatStore {
     const insertMessage = this.db.query(
       `INSERT INTO chat_messages
        (id, session_id, role, content, model, tool_calls, tool_call_id, name, parts, metadata,
-        request_prompt_tokens, request_tools_tokens, request_total_input_tokens, request_completion_tokens)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        request_prompt_tokens, request_tools_tokens, request_total_input_tokens, request_completion_tokens,
+        cache_read_tokens, cache_write_tokens, thinking_tokens, provider_model_id, cost_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
 
     const tx = this.db.transaction(() => {
@@ -373,6 +468,11 @@ export class ChatStore {
         const toolTokens = toNullableNumber(message["request_tools_tokens"]);
         const totalTokens = toNullableNumber(message["request_total_input_tokens"]);
         const completionTokens = toNullableNumber(message["request_completion_tokens"]);
+        const cacheReadTokens = toNullableNumber(message["cache_read_tokens"]);
+        const cacheWriteTokens = toNullableNumber(message["cache_write_tokens"]);
+        const thinkingTokens = toNullableNumber(message["thinking_tokens"]);
+        const providerModelId = toNullableString(message["provider_model_id"]);
+        const costJson = message["cost_json"] ? JSON.stringify(message["cost_json"]) : null;
 
         insertMessage.run(
           newMessageId,
@@ -388,7 +488,12 @@ export class ChatStore {
           promptTokens,
           toolTokens,
           totalTokens,
-          completionTokens
+          completionTokens,
+          cacheReadTokens,
+          cacheWriteTokens,
+          thinkingTokens,
+          providerModelId,
+          costJson
         );
 
         if (messageId && message["id"] === messageId) {
@@ -451,6 +556,31 @@ export class ChatStore {
     eventId: string = randomUUID()
   ): ChatRunEvent {
     return RunOps.addRunEvent(this.db, runId, seq, type, data, eventId);
+  }
+
+  /**
+   * Get run events for a run, optionally after a given sequence number.
+   * @param runId - Run identifier.
+   * @param afterSeq - Optional sequence number to start from (exclusive).
+   * @returns Run events ordered by seq.
+   */
+  public getRunEvents(runId: string, afterSeq = 0): ChatRunEvent[] {
+    const rows = this.db
+      .query(
+        "SELECT id, run_id, seq, type, data, created_at FROM chat_run_events WHERE run_id = ? AND seq > ? ORDER BY seq"
+      )
+      .all(runId, afterSeq) as Array<Record<string, unknown>>;
+    return rows.map((row) => {
+      const hydrated: Record<string, unknown> = { ...row };
+      if (typeof hydrated["data"] === "string") {
+        try {
+          hydrated["data"] = JSON.parse(hydrated["data"] as string);
+        } catch {
+          // leave as string
+        }
+      }
+      return hydrated as ChatRunEvent;
+    });
   }
 
   /**

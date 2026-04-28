@@ -100,6 +100,9 @@ describe("audio routes", () => {
       lifecycleCoordinator: {
         evict: async () => ({ success: true, evicted_pid: await evictModel() }),
       },
+      engineService: {
+        evict: async () => ({ success: true, evicted_pid: await evictModel() }),
+      },
     } as unknown as AppContext;
 
     registerAudioRoutes(app, context, {

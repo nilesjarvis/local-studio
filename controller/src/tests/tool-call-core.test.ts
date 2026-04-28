@@ -289,9 +289,7 @@ describe("tool-call-core", () => {
     const source = new ReadableStream<Uint8Array>({
       start(controller): void {
         controller.enqueue(
-          encoder.encode(
-            `data: {"choices":[{"delta":{"content":"result is 42"}}]}\n\n`
-          )
+          encoder.encode(`data: {"choices":[{"delta":{"content":"result is 42"}}]}\n\n`)
         );
         controller.enqueue(
           encoder.encode(
@@ -314,14 +312,10 @@ describe("tool-call-core", () => {
     const source = new ReadableStream<Uint8Array>({
       start(controller): void {
         controller.enqueue(
-          encoder.encode(
-            `data: {"choices":[{"delta":{"content":"visible ${openTag}"}}]}\n\n`
-          )
+          encoder.encode(`data: {"choices":[{"delta":{"content":"visible ${openTag}"}}]}\n\n`)
         );
         controller.enqueue(
-          encoder.encode(
-            'data: {"choices":[{"delta":{"content":"\\nreasoning text"}}]}\n\n'
-          )
+          encoder.encode('data: {"choices":[{"delta":{"content":"\\nreasoning text"}}]}\n\n')
         );
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
         controller.close();
@@ -343,9 +337,7 @@ describe("tool-call-core", () => {
       start(controller): void {
         for (const part of parts) {
           controller.enqueue(
-            encoder.encode(
-              `data: {"choices":[{"delta":{"content":"${part}"}}]}\n\n`
-            )
+            encoder.encode(`data: {"choices":[{"delta":{"content":"${part}"}}]}\n\n`)
           );
         }
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
@@ -380,5 +372,43 @@ describe("tool-call-core", () => {
     const delta = collectDeltaText(events);
     expect(delta.content).toBe(" after");
     expect(delta.reasoning).toBe("secret text");
+  });
+});
+
+describe("normalizeChatMessageContentParts", () => {
+  it("collapses OpenAI text content arrays for text-only local backends", async () => {
+    const { normalizeChatMessageContentParts } = await import("../modules/proxy/tool-call-core");
+    const payload: Record<string, unknown> = {
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "say " },
+            { type: "text", text: "hi" },
+          ],
+        },
+        { role: "assistant", content: "hello" },
+      ],
+    };
+
+    expect(normalizeChatMessageContentParts(payload)).toBe(true);
+    expect(payload).toEqual({
+      messages: [
+        { role: "user", content: "say hi" },
+        { role: "assistant", content: "hello" },
+      ],
+    });
+  });
+
+  it("leaves multimodal arrays intact", async () => {
+    const { normalizeChatMessageContentParts } = await import("../modules/proxy/tool-call-core");
+    const content = [
+      { type: "text", text: "describe" },
+      { type: "image_url", image_url: { url: "data:image/png;base64,abc" } },
+    ];
+    const payload: Record<string, unknown> = { messages: [{ role: "user", content }] };
+
+    expect(normalizeChatMessageContentParts(payload)).toBe(false);
+    expect((payload["messages"] as Array<Record<string, unknown>>)[0]?.["content"]).toBe(content);
   });
 });

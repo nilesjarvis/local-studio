@@ -89,13 +89,27 @@ const buildUsage = (message: StoredMessageRecord): Usage => {
     getNumber(message["total_tokens"]) ??
     getNumber(message["request_total_input_tokens"]) ??
     promptTokens + completionTokens;
+  const cacheRead = getNumber(message["cache_read_tokens"]) ?? 0;
+  const cacheWrite = getNumber(message["cache_write_tokens"]) ?? 0;
+  let cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+  const rawCost = message["cost_json"];
+  if (rawCost && typeof rawCost === "object" && !Array.isArray(rawCost)) {
+    const c = rawCost as Record<string, unknown>;
+    cost = {
+      input: getNumber(c["input"]) ?? 0,
+      output: getNumber(c["output"]) ?? 0,
+      cacheRead: getNumber(c["cacheRead"]) ?? 0,
+      cacheWrite: getNumber(c["cacheWrite"]) ?? 0,
+      total: getNumber(c["total"]) ?? 0,
+    };
+  }
   return {
     input: promptTokens,
     output: completionTokens,
-    cacheRead: 0,
-    cacheWrite: 0,
+    cacheRead,
+    cacheWrite,
     totalTokens,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    cost,
   };
 };
 

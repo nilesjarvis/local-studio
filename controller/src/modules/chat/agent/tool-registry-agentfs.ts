@@ -27,6 +27,8 @@ export const buildAgentFsTools = (
 ): AgentTool[] => {
   const sessionId = options.sessionId;
   const emit = options.emitEvent;
+  const approvalGate = options.approvalGate;
+  const runId = options.runId;
   const publishAgentFsEvent = async (
     eventName: AgentEventType,
     payload: Record<string, unknown>
@@ -99,10 +101,25 @@ export const buildAgentFsTools = (
       properties: { path: { type: "string" }, content: { type: "string" } },
       required: ["path", "content"],
     } as unknown as TSchema,
-    execute: async (_toolCallId, params): Promise<AgentToolResult<Record<string, unknown>>> => {
+    execute: async (toolCallId, params): Promise<AgentToolResult<Record<string, unknown>>> => {
       const raw = params as Record<string, unknown>;
       const path = typeof raw["path"] === "string" ? raw["path"] : "";
       if (!path) throw new Error("Path is required.");
+      if (approvalGate && runId) {
+        const decision = await approvalGate.requestApproval({
+          toolCallId,
+          toolName: AGENT_TOOL_NAMES.WRITE_FILE,
+          args: { path, contentLength: typeof raw["content"] === "string" ? raw["content"].length : 0 },
+          runId,
+          sessionId,
+        });
+        if (!decision.approved) {
+          return createTextResult(
+            `File write denied${decision.reason ? `: ${decision.reason}` : ""}`,
+            { denied: true, path }
+          );
+        }
+      }
       const content = typeof raw["content"] === "string" ? raw["content"] : "";
       const { normalizedPath, bytes } = await writeAgentFile(context, sessionId, path, content);
       await publishAgentFsEvent(AGENT_FILE_EVENT_TYPES.AGENT_FILE_WRITTEN, {
@@ -124,10 +141,25 @@ export const buildAgentFsTools = (
       properties: { path: { type: "string" } },
       required: ["path"],
     } as unknown as TSchema,
-    execute: async (_toolCallId, params): Promise<AgentToolResult<Record<string, unknown>>> => {
+    execute: async (toolCallId, params): Promise<AgentToolResult<Record<string, unknown>>> => {
       const raw = params as Record<string, unknown>;
       const path = typeof raw["path"] === "string" ? raw["path"] : "";
       if (!path) throw new Error("Path is required.");
+      if (approvalGate && runId) {
+        const decision = await approvalGate.requestApproval({
+          toolCallId,
+          toolName: AGENT_TOOL_NAMES.DELETE_FILE,
+          args: { path },
+          runId,
+          sessionId,
+        });
+        if (!decision.approved) {
+          return createTextResult(
+            `File deletion denied${decision.reason ? `: ${decision.reason}` : ""}`,
+            { denied: true, path }
+          );
+        }
+      }
       const normalizedPath = await deleteAgentPath(context, sessionId, path);
       await publishAgentFsEvent(AGENT_FILE_EVENT_TYPES.AGENT_FILE_DELETED, {
         session_id: sessionId,

@@ -4,15 +4,15 @@ import { resolve } from "node:path";
 import type { AppContext } from "./types/context";
 import { createConfig } from "./config/env";
 import { createEventManager } from "./modules/monitoring/event-manager";
-import { createLaunchState } from "./modules/lifecycle/state/launch-state";
+import { createLaunchState } from "./modules/engines/layers/launch-state";
 import { createMetrics } from "./modules/monitoring/metrics";
-import { createProcessManager } from "./modules/lifecycle/process/process-manager";
-import { createLifecycleCoordinator } from "./modules/lifecycle/state/lifecycle-coordinator";
-import { DownloadManager } from "./modules/downloads/manager";
+import { createProcessManager } from "./modules/engines/layers/process-manager";
+import { DownloadManager } from "./modules/engines/layers/download-manager";
+import { createEngineCoordinator } from "./modules/engines/layers/engine-coordinator";
 import { createLogger, resolveLogLevel } from "./core/logger";
 import { primaryLogPathFor } from "./core/log-files";
 import { ChatStore } from "./modules/chat/store";
-import { DownloadStore } from "./modules/downloads/store";
+import { DownloadStore } from "./modules/engines/layers/download-store";
 import { PeakMetricsStore, LifetimeMetricsStore } from "./modules/monitoring/metrics-store";
 import { RecipeStore } from "./modules/lifecycle/recipes/recipe-store";
 import { ChatRunManager } from "./modules/chat/agent/run-manager";
@@ -44,17 +44,17 @@ export const createAppContext = (): AppContext => {
   const { registry: metricsRegistry, metrics } = createMetrics();
   const processManager = createProcessManager(config, logger, eventManager);
   let runManager: ChatRunManager | null = null;
-  const lifecycleCoordinator = createLifecycleCoordinator({
+  const downloadManager = new DownloadManager(config, downloadStore, eventManager, logger);
+
+  const engineService = createEngineCoordinator({
     config,
     logger,
     eventManager,
-    launchState,
-    metrics,
     processManager,
     recipeStore,
+    downloadManager,
     abortRunsForModel: (modelName) => runManager?.abortRunsForModel(modelName) ?? 0,
   });
-  const downloadManager = new DownloadManager(config, downloadStore, eventManager, logger);
 
   lifetimeMetricsStore.ensureFirstStarted();
 
@@ -66,8 +66,8 @@ export const createAppContext = (): AppContext => {
     metrics,
     metricsRegistry,
     processManager,
-    lifecycleCoordinator,
     downloadManager,
+    engineService,
     stores: {
       recipeStore,
       chatStore,

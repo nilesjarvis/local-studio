@@ -5,8 +5,8 @@ import { cors } from "hono/cors";
 import type { AppContext } from "../types/context";
 import { isHttpStatus } from "../core/errors";
 import { registerAllChatRoutes } from "../modules/chat/routes";
-import { registerDownloadsRoutes } from "../modules/downloads/routes";
-import { registerAllLifecycleRoutes } from "../modules/lifecycle/routes";
+import { registerEngineRoutes } from "../modules/engines/routes";
+import { registerSystemRoutes } from "../modules/lifecycle/routes/system-routes";
 import { registerModelsRoutes } from "../modules/models/routes";
 import { registerAllMonitoringRoutes } from "../modules/monitoring/routes";
 import { registerAllProxyRoutes } from "../modules/proxy/routes";
@@ -56,10 +56,10 @@ export const createApp = (context: AppContext): Hono => {
   app.use("*", createMutatingAuthMiddleware(context));
 
   // Register all routes
-  registerAllLifecycleRoutes(app, context);
+  registerSystemRoutes(app, context);
+  registerEngineRoutes(app, context);
   registerModelsRoutes(app, context);
   registerStudioRoutes(app, context);
-  registerDownloadsRoutes(app, context);
   registerAllChatRoutes(app, context);
   registerAllMonitoringRoutes(app, context);
   registerAudioRoutes(app, context);

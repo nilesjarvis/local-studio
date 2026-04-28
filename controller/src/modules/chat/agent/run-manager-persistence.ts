@@ -3,6 +3,7 @@ import { Event } from "../../monitoring/event-manager";
 import type { AppContext } from "../../../types/context";
 import { AGENT_RUN_EVENT_TYPES } from "./contracts";
 import type { AssistantMessage, ToolResultMessage, Usage } from "./pi-agent-types";
+import { calculateCost, getModelPricing } from "../cost-calculator";
 
 /**
  * Convert Pi usage counters into the controller chat usage shape.
@@ -11,12 +12,22 @@ import type { AssistantMessage, ToolResultMessage, Usage } from "./pi-agent-type
  */
 export function toLanguageUsage(
   usage: Usage | undefined
-): { inputTokens: number; outputTokens: number; totalTokens: number } | undefined {
+): {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  cost: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number } | undefined;
+} | undefined {
   if (!usage) return undefined;
   return {
     inputTokens: usage.input,
     outputTokens: usage.output,
     totalTokens: usage.totalTokens,
+    cacheReadTokens: usage.cacheRead ?? 0,
+    cacheWriteTokens: usage.cacheWrite ?? 0,
+    cost: usage.cost,
   };
 }
 
@@ -144,6 +155,23 @@ export function persistAssistantMessage(
     metadata["turnIndex"] = turnIndex;
   }
 
+  // Prefer pi-agent cost, fall back to local pricing calculation
+  let costJson: Record<string, number> | undefined = usage?.cost;
+  if (!costJson || Object.values(costJson).every((v) => v === 0)) {
+    const pricing = getModelPricing(context, assistant.model ?? "");
+    if (pricing && usage) {
+      costJson = calculateCost(
+        {
+          input: usage.inputTokens,
+          output: usage.outputTokens,
+          cacheRead: usage.cacheReadTokens,
+          cacheWrite: usage.cacheWriteTokens,
+        },
+        pricing
+      );
+    }
+  }
+
   context.stores.chatStore.addMessage(
     sessionId,
     messageId,
@@ -156,7 +184,14 @@ export function persistAssistantMessage(
     usage?.totalTokens,
     usage?.outputTokens,
     parts,
-    metadata
+    metadata,
+    undefined,
+    undefined,
+    usage?.cacheReadTokens,
+    usage?.cacheWriteTokens,
+    undefined,
+    assistant.model,
+    costJson
   );
 
   const sessionSummary = context.stores.chatStore.getSessionSummary(sessionId);

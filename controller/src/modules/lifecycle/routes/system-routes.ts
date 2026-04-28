@@ -8,9 +8,8 @@ import type { SystemConfigResponse } from "../types";
 import { badRequest, notFound } from "../../../core/errors";
 import { estimateWeightsSizeBytes } from "../../models/model-browser";
 import { getGpuInfo } from "../platform/gpu";
-import { getSystemRuntimeInfo } from "../runtime/runtime-info";
+import { getSystemRuntimeInfo } from "../../engines/layers/runtime-info";
 import { buildCompatibilityReport } from "../platform/compatibility-report";
-import { fetchInference } from "../../../services/inference/inference-client";
 import { fetchLocal } from "../../../http/local-fetch";
 
 /**
@@ -65,8 +64,8 @@ export const registerSystemRoutes = (app: Hono, context: AppContext): void => {
   });
 
   app.get("/compat", async (ctx) => {
-    const runtime = await getSystemRuntimeInfo(context.config);
     const known = await context.processManager.findInferenceProcess(context.config.inference_port);
+    const runtime = await getSystemRuntimeInfo(context.config, known);
     const portOpen = await checkService("127.0.0.1", context.config.inference_port, 500);
 
     const report = buildCompatibilityReport({
@@ -217,20 +216,10 @@ export const registerSystemRoutes = (app: Hono, context: AppContext): void => {
       description: "Controller service (Bun/Hono)",
     });
 
-    let inferenceStatus = "unknown";
-    try {
-      const current = await context.processManager.findInferenceProcess(
-        context.config.inference_port
-      );
-      if (current) {
-        const response = await fetchInference(context, "/health", { timeoutMs: 2000 });
-        inferenceStatus = response.status === 200 ? "running" : "error";
-      } else {
-        inferenceStatus = "stopped";
-      }
-    } catch {
-      inferenceStatus = "stopped";
-    }
+    const current = await context.processManager.findInferenceProcess(
+      context.config.inference_port
+    );
+    const inferenceStatus = current ? "running" : "stopped";
 
     services.push({
       name: "vLLM/SGLang",
@@ -279,7 +268,7 @@ export const registerSystemRoutes = (app: Hono, context: AppContext): void => {
       description: "Next.js web UI",
     });
 
-    const runtime = await getSystemRuntimeInfo(context.config);
+    const runtime = await getSystemRuntimeInfo(context.config, current);
 
     const payload: SystemConfigResponse = {
       config: {

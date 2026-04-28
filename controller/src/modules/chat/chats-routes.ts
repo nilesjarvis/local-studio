@@ -311,6 +311,72 @@ export const registerChatsRoutes = (app: Hono, context: AppContext): void => {
     return ctx.json({ success: true });
   });
 
+  app.get("/chats/:sessionId/runs/:runId/events", async (ctx) => {
+    const runId = ctx.req.param("runId");
+    const afterSeq = Number(ctx.req.query("after_seq") ?? 0);
+    const events = context.stores.chatStore.getRunEvents(runId, afterSeq);
+    const lines: string[] = [];
+    for (const event of events) {
+      const eventData = event.data ? JSON.stringify(event.data) : "{}";
+      lines.push(`event: ${event.type}\ndata: ${eventData}\n\n`);
+    }
+    return new Response(
+      streamAsyncStrings(
+        (async function* () {
+          for (const line of lines) {
+            yield line;
+          }
+          yield ":done\n\n";
+        })()
+      ),
+      { headers: buildSseHeaders() }
+    );
+  });
+
+  app.post("/chats/:sessionId/continue", async (ctx) => {
+    const sessionId = ctx.req.param("sessionId");
+    const body = (await ctx.req.json().catch(() => ({}))) as Record<string, unknown>;
+    const runId = typeof body["run_id"] === "string" ? body["run_id"] : "";
+    if (!runId) {
+      throw badRequest("run_id is required");
+    }
+    const stream = await context.runManager.continueRun(sessionId, runId);
+    return new Response(
+      streamAsyncStrings(stream.stream),
+      { headers: { ...buildSseHeaders(), "X-Run-Id": stream.runId } }
+    );
+  });
+
+  app.post("/chats/:sessionId/followup", async (ctx) => {
+    const sessionId = ctx.req.param("sessionId");
+    const body = (await ctx.req.json().catch(() => ({}))) as Record<string, unknown>;
+    const content = typeof body["content"] === "string" ? body["content"] : "";
+    if (!content) {
+      throw badRequest("content is required");
+    }
+    const stream = await context.runManager.followUpRun(sessionId, content);
+    return new Response(
+      streamAsyncStrings(stream.stream),
+      { headers: { ...buildSseHeaders(), "X-Run-Id": stream.runId } }
+    );
+  });
+
+  app.post("/chats/:sessionId/runs/:runId/approve", async (ctx) => {
+    const runId = ctx.req.param("runId");
+    const body = (await ctx.req.json().catch(() => ({}))) as Record<string, unknown>;
+    const toolCallId = typeof body["tool_call_id"] === "string" ? body["tool_call_id"] : "";
+    const approved = Boolean(body["approved"]);
+    const reason = typeof body["reason"] === "string" ? body["reason"] : undefined;
+    if (!toolCallId) {
+      throw badRequest("tool_call_id is required");
+    }
+    const resolved = context.runManager.resolveApproval(runId, toolCallId, approved, reason);
+    if (!resolved) {
+      throw notFound("Pending approval not found");
+    }
+    return ctx.json({ success: true });
+  });
+
   app.post("/chats/retitle-all", async (ctx) => {
     const sessions = context.stores.chatStore.listSessions();
     let updated = 0;

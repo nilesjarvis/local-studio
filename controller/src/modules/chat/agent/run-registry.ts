@@ -3,6 +3,7 @@ import {
   createStateMachine,
   type StateMachineContainer,
 } from "../../../../../shared/src/state-machine";
+import type { ApprovalGate } from "./tool-approval-gate";
 
 export type RunRegistryPhase = "starting" | "running" | "aborting" | "finished";
 
@@ -13,6 +14,7 @@ export interface RunRegistryEntry {
   abort: AbortController;
   model: string | null;
   provider: string;
+  approvalGate: ApprovalGate | undefined;
 }
 
 export interface RunRegistry {
@@ -22,7 +24,8 @@ export interface RunRegistry {
     agent: Agent,
     abort: AbortController,
     model: string | null,
-    provider: string
+    provider: string,
+    approvalGate?: ApprovalGate
   ) => RunRegistryEntry;
   markRunning: (runId: string) => void;
   markAbortRequested: (runId: string) => void;
@@ -45,6 +48,7 @@ type RunRegistryEvent =
       abort: AbortController;
       model: string | null;
       provider: string;
+      approvalGate: ApprovalGate | undefined;
     }
   | {
       type: "start";
@@ -75,6 +79,7 @@ const reducer = (state: RunRegistryState, event: RunRegistryEvent): RunRegistryS
         abort: event.abort,
         model: event.model,
         provider: event.provider,
+        approvalGate: event.approvalGate,
       });
       return { ...state, runs: next };
     }
@@ -134,7 +139,8 @@ export const createRunRegistry = (): RunRegistry => {
       agent: Agent,
       abort: AbortController,
       model: string | null,
-      provider: string
+      provider: string,
+      approvalGate?: ApprovalGate
     ): RunRegistryEntry => {
       machine.dispatch(
         {
@@ -144,6 +150,7 @@ export const createRunRegistry = (): RunRegistry => {
           abort,
           model,
           provider,
+          approvalGate,
         },
         undefined
       );

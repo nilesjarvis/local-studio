@@ -61,7 +61,9 @@ export function formatHttpErrorMessage(status: number, body: unknown): string {
           const loc =
             Array.isArray(locRaw) && locRaw.length > 0
               ? locRaw
-                  .filter((x): x is string | number => typeof x === "string" || typeof x === "number")
+                  .filter(
+                    (x): x is string | number => typeof x === "string" || typeof x === "number",
+                  )
                   .join(".")
               : "";
           return loc ? `${loc}: ${msg}` : msg;
@@ -149,7 +151,10 @@ export type ApiCore = ReturnType<typeof createApiCore>;
 export function createApiCore(params: { baseUrl: string; useProxy: boolean }) {
   const { baseUrl, useProxy } = params;
 
-  const normalizeSsePayload = (event: string, data: Record<string, unknown>): ChatRunStreamEvent => {
+  const normalizeSsePayload = (
+    event: string,
+    data: Record<string, unknown>,
+  ): ChatRunStreamEvent => {
     // Backward-compatibility: some older proxy/controller stacks emit SSE frames with
     // `event: message` (or no event line) and wrap the real event inside nested payloads.
     //
@@ -170,11 +175,7 @@ export function createApiCore(params: { baseUrl: string; useProxy: boolean }) {
         ? (data["payload"] as Record<string, unknown>)
         : null;
 
-    if (
-      (event === "message" || event === "") &&
-      nestedEvent &&
-      nestedData
-    ) {
+    if ((event === "message" || event === "") && nestedEvent && nestedData) {
       return {
         event: nestedEvent,
         data: nestedData,
@@ -234,15 +235,17 @@ export function createApiCore(params: { baseUrl: string; useProxy: boolean }) {
 
     let lastError: Error | null = null;
     let lastStatus: number | undefined;
+    let retriedWithoutBackendOverride = false;
+    const maxAttempts = retries + (useProxy && headers["X-Backend-Url"] ? 1 : 0);
 
-    for (let attempt = 0; attempt <= retries; attempt++) {
+    for (let attempt = 0; attempt <= maxAttempts; attempt++) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeout);
 
       try {
         const response = await fetch(url, {
           ...fetchOptions,
-          headers,
+          headers: { ...headers },
           credentials: "include",
           signal: controller.signal,
         });
@@ -252,7 +255,20 @@ export function createApiCore(params: { baseUrl: string; useProxy: boolean }) {
         maybeClearInvalidBackendOverride(response);
 
         if (!response.ok) {
-          const errorBody: unknown = await response.json().catch(() => ({ detail: "Request failed" }));
+          if (
+            useProxy &&
+            response.headers.get("x-backend-override-invalid") === "1" &&
+            headers["X-Backend-Url"] &&
+            !retriedWithoutBackendOverride
+          ) {
+            retriedWithoutBackendOverride = true;
+            delete headers["X-Backend-Url"];
+            continue;
+          }
+
+          const errorBody: unknown = await response
+            .json()
+            .catch(() => ({ detail: "Request failed" }));
           const errorMessage = formatHttpErrorMessage(response.status, errorBody);
           lastError = new Error(errorMessage);
 

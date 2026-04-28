@@ -12,6 +12,10 @@ export interface ChatRunOptions {
   deepResearch?: boolean;
   thinkingLevel?: ThinkingLevel;
   images?: Array<{ data: string; mimeType: string; name?: string }>;
+  /** Continue a previous run, re-prompting the agent with empty content. */
+  continuePreviousRun?: boolean;
+  /** Treat this as a follow-up to the last run (use existing agent session). */
+  followUpPreviousRun?: boolean;
 }
 
 export interface ChatRunStream {

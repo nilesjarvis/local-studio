@@ -10,6 +10,7 @@ import type {
   ToolCall,
 } from "./pi-agent-types";
 import type { StreamFn } from "@mariozechner/pi-agent-core";
+import { convertMessagesForProvider } from "./context-converter";
 
 type ToolCallWithPartialArguments = ToolCall & { partialArgs?: string };
 type WritableAssistantStream = AssistantStream & {
@@ -26,6 +27,49 @@ const defaultStreamFunction = new Agent().streamFn as (
 const createStreamLike = (baseStream: AssistantStream): WritableAssistantStream => {
   const StreamConstructor = baseStream.constructor as new () => WritableAssistantStream;
   return new StreamConstructor();
+};
+
+const normalizeTextOnlyOpenAiMessages = (payload: unknown): void => {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return;
+  }
+
+  const messages = (payload as Record<string, unknown>)["messages"];
+  if (!Array.isArray(messages)) {
+    return;
+  }
+
+  for (const message of messages) {
+    if (!message || typeof message !== "object" || Array.isArray(message)) {
+      continue;
+    }
+    const record = message as Record<string, unknown>;
+    const content = record["content"];
+    if (!Array.isArray(content)) {
+      continue;
+    }
+
+    const chunks: string[] = [];
+    let textOnly = true;
+    for (const part of content) {
+      if (!part || typeof part !== "object" || Array.isArray(part)) {
+        textOnly = false;
+        break;
+      }
+      const partRecord = part as Record<string, unknown>;
+      const type = typeof partRecord["type"] === "string" ? partRecord["type"] : "";
+      const text = partRecord["text"];
+      if ((type !== "text" && type !== "input_text") || typeof text !== "string") {
+        textOnly = false;
+        break;
+      }
+      chunks.push(text);
+    }
+
+    if (textOnly) {
+      record["content"] = chunks.join("");
+    }
+  }
 };
 
 const isToolCallParseError = (message: AssistantMessage): boolean => {
@@ -196,7 +240,21 @@ export const streamOpenAiCompletionsSafe: StreamFn = (
     return defaultStreamFunction(model, context, options);
   }
 
-  const baseStream = defaultStreamFunction(model, context, options);
+  const wrappedOptions = {
+    ...options,
+    // Let pi-ai do the canonical Pi Message -> OpenAI payload conversion first,
+    // then adapt the resulting OpenAI text-only content parts for SGLang builds
+    // that still expect `message.content` to be a string.
+    onPayload: (payload: unknown): void => {
+      options?.onPayload?.(payload);
+      normalizeTextOnlyOpenAiMessages(payload);
+	      if (typeof model.provider === "string" && model.provider !== "openai") {
+	        convertMessagesForProvider(payload as Record<string, unknown>, model.provider);
+	      }
+    },
+  };
+
+  const baseStream = defaultStreamFunction(model, context, wrappedOptions);
   const stream = createStreamLike(baseStream);
 
   (async (): Promise<void> => {

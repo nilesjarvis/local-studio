@@ -10,6 +10,7 @@ import { streamOpenAiCompletionsSafe } from "./stream-openai-completions-safe";
 import { buildSystemPrompt } from "./system-prompt-builder";
 import { persistAssistantMessage, extractToolResultText } from "./run-manager-persistence";
 import { createRunPublisher, createSseStream } from "./run-manager-sse";
+import { createApprovalGate } from "./tool-approval-gate";
 import { AGENT_RUN_EVENT_TYPES, type AgentEventType } from "./contracts";
 import { createMessageCleaner } from "./run-manager-utf8";
 import { resolveModel, resolveApiKey } from "./run-manager-model-resolver";
@@ -103,6 +104,15 @@ export async function createChatRun(
 
   const queue = new AsyncQueue<string>(RUN_EVENT_QUEUE_CAPACITY);
   const abort = new AbortController();
+
+  const { publish } = createRunPublisher(context, { runId, sessionId, queue });
+
+  const publishPlanEvent = (type: AgentEventType, data: Record<string, unknown>): void => {
+    publish(type, data);
+  };
+
+  const approvalGate = createApprovalGate((type, data) => publish(type as AgentEventType, data));
+
   const runEntry = activeRuns.createRun(
     runId,
     new Agent({
@@ -120,7 +130,8 @@ export async function createChatRun(
     }),
     abort,
     requestModel,
-    provider
+    provider,
+    approvalGate
   );
   const agent = runEntry.agent;
   agent.sessionId = sessionId;
@@ -137,17 +148,13 @@ export async function createChatRun(
 
   const cleanMessage = createMessageCleaner();
 
-  const { publish } = createRunPublisher(context, { runId, sessionId, queue });
-
-  const publishPlanEvent = (type: AgentEventType, data: Record<string, unknown>): void => {
-    publish(type, data);
-  };
-
   const tools = await buildAgentTools(context, {
     sessionId,
     agentMode: Boolean(options.agentMode),
     agentFiles: Boolean(options.agentFiles),
     emitEvent: publishPlanEvent,
+    approvalGate,
+    runId,
   });
   agent.setTools(tools);
 
@@ -221,6 +228,7 @@ export async function createChatRun(
     })
     .finally(() => {
       unsubscribe();
+      approvalGate.clear();
       activeRuns.markFinished(runId);
       context.stores.chatStore.updateRun(runId, {
         status: runStatus,

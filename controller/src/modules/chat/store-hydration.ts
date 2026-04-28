@@ -33,6 +33,9 @@ export function hydrateMessageRow(row: Record<string, unknown>): ChatMessage {
   if (typeof next["metadata"] === "string") {
     next["metadata"] = parseJsonOrNull(next["metadata"]);
   }
+  if (typeof next["cost_json"] === "string") {
+    next["cost_json"] = parseJsonOrNull(next["cost_json"]);
+  }
 
   // Normalize known "array-ish" JSON columns to either an array or null.
   // This keeps downstream code from needing to guard against primitives/objects.

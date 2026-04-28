@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import type { RuntimeRocmInfo, RuntimeRocmSmiTool } from "../types";
 import { runCommand } from "../../../core/command";
 import { resolveAmdSmiBinary, resolveForcedRocmTool, resolveRocmSmiBinary } from "./smi-tools";
-import { ROCM_UPGRADE_ENV, isUpgradeCommandConfigured } from "../runtime/runtime-upgrade-config";
+import { ROCM_UPGRADE_ENV, isUpgradeCommandConfigured } from "../../engines/layers/upgrade-config";
 
 const parseHipccVersion = (output: string): string | null => {
   const match = output.match(/HIP version\s*:\s*([0-9.]+)/i);

@@ -32,10 +32,8 @@ export function ControlPanel(props: DashboardLayoutProps) {
         onViewAll={props.onViewAll}
       />
 
-      {/* GPU — when GPUs exist */}
-      {gpus.length > 0 && (
-        <GpuSection metrics={metrics} gpus={gpus} currentProcess={currentProcess} logs={logs} />
-      )}
+      {/* GPU — always rendered so loading/offline/standby states do not shift the page. */}
+      <GpuSection metrics={metrics} gpus={gpus} currentProcess={currentProcess} logs={logs} />
 
       {/* Logs */}
       <LogSection logs={logs} />

@@ -21,6 +21,8 @@ export const AGENT_RUN_EVENT_TYPES = {
   CHAT_SESSION_FORKED: "chat_session_forked",
   PLAN_UPDATED: "plan_updated",
   AGENT_PLAN_UPDATED: "agent_plan_updated",
+  APPROVAL_REQUESTED: "approval_requested",
+  APPROVAL_RESOLVED: "approval_resolved",
 } as const;
 
 export type AgentRunEventType = (typeof AGENT_RUN_EVENT_TYPES)[keyof typeof AGENT_RUN_EVENT_TYPES];
