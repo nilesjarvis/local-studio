@@ -10,7 +10,6 @@ const bridge: DesktopBridge = {
   listProjects: () => ipcRenderer.invoke("desktop:list-projects"),
   addProject: (directoryPath) => ipcRenderer.invoke("desktop:add-project", directoryPath),
   removeProject: (id) => ipcRenderer.invoke("desktop:remove-project", id),
-  getPtyPort: () => ipcRenderer.invoke("desktop:get-pty-port"),
 };
 
 contextBridge.exposeInMainWorld("vllmStudioDesktop", bridge);

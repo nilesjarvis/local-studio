@@ -1,5 +1,4 @@
 import { app, dialog, ipcMain, shell, type BrowserWindow } from "electron";
-import { DESKTOP_CONFIG } from "./configs";
 import type { DesktopAppState } from "./types";
 import { log } from "./helpers/logger";
 import { isHttpUrl } from "./helpers/url";
@@ -8,23 +7,13 @@ import { registerNavigationPolicy } from "./logic/security";
 import { startFrontendServer, stopFrontendServer, type ServerHandle } from "./logic/app-server";
 import { checkForUpdates, getUpdateState, initializeAutoUpdates } from "./logic/update-manager";
 import { addProject, listProjectsWithMeta, removeProject } from "./logic/projects-store";
-import { startPtyServer, type PtyServerHandle } from "./logic/pty-shared";
 
 let appState: DesktopAppState = "starting";
 let mainWindow: BrowserWindow | null = null;
 let frontendServer: ServerHandle | undefined;
-let ptyServer: PtyServerHandle | null = null;
 
 async function bootstrap(): Promise<void> {
   frontendServer = await startFrontendServer();
-  if (!ptyServer) {
-    try {
-      ptyServer = await startPtyServer();
-      log.info(`PTY server listening on 127.0.0.1:${ptyServer.port}`);
-    } catch (error) {
-      log.error(`Failed to start PTY server: ${String(error)}`);
-    }
-  }
   registerNavigationPolicy(new URL(frontendServer.runtime.url).origin);
   mainWindow = createMainWindow(frontendServer.runtime.url);
   mainWindow.on("closed", () => {
@@ -86,21 +75,11 @@ function registerIpcHandlers(): void {
     removeProject(id);
     return { ok: true } as const;
   });
-
-  ipcMain.handle("desktop:get-pty-port", async () => (ptyServer ? ptyServer.port : null));
 }
 
 async function shutdown(): Promise<void> {
   if (appState === "stopping") return;
   appState = "stopping";
-  if (ptyServer) {
-    try {
-      await ptyServer.dispose();
-    } catch (error) {
-      log.warn(`PTY server dispose failed: ${String(error)}`);
-    }
-    ptyServer = null;
-  }
   await stopFrontendServer(frontendServer);
 }
 

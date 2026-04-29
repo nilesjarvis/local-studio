@@ -11,12 +11,10 @@ import {
   RotateCcw,
   Send,
   Square,
-  Terminal,
   Trash2,
   X,
 } from "lucide-react";
 import { AssistantMarkdown } from "./assistant-markdown";
-import { PtyTerminal } from "./pty-terminal";
 
 type WebviewElement = HTMLElement & {
   goBack: () => void;
@@ -34,19 +32,27 @@ type AgentModel = {
   reasoning: boolean;
 };
 
-type ToolRecord = {
-  id: string;
+type ToolBlock = {
+  kind: "tool";
+  id: string; // toolCallId
   name: string;
   status: "running" | "done" | "error";
   text: string;
 };
 
+type TextBlock = { kind: "text"; id: string; text: string };
+type ThinkingBlock = { kind: "thinking"; id: string; text: string };
+
+type AssistantBlock = TextBlock | ThinkingBlock | ToolBlock;
+
 type ChatMessage = {
   id: string;
   role: "user" | "assistant" | "system";
+  // For user/system messages, plain text is enough.
   text: string;
-  thinking?: string;
-  tools?: ToolRecord[];
+  // For assistant messages, blocks preserves the temporal order of
+  // thinking / text / tool events as they arrive from the pi RPC stream.
+  blocks?: AssistantBlock[];
   timestamp?: string;
 };
 
@@ -129,7 +135,6 @@ export function AgentWorkspace() {
   const [error, setError] = useState("");
   const [loadingModels, setLoadingModels] = useState(true);
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
-  const [terminalOpen, setTerminalOpen] = useState(false);
   const [isMultiline, setIsMultiline] = useState(false);
   const [browserUrl, setBrowserUrl] = useState("https://duckduckgo.com");
   const [browserInput, setBrowserInput] = useState("https://duckduckgo.com");
@@ -345,110 +350,135 @@ export function AgentWorkspace() {
     );
   }
 
+  // Append a delta to the last block of `kind` if it's currently at the end of
+  // the timeline; otherwise start a fresh block. This preserves the temporal
+  // order in which Pi emits thinking / text / tool events, so the rendered
+  // layout never reflows when subsequent events arrive.
+  function appendDelta(
+    blocks: AssistantBlock[],
+    kind: "text" | "thinking",
+    delta: string,
+  ): AssistantBlock[] {
+    const last = blocks[blocks.length - 1];
+    if (last && last.kind === kind) {
+      const updated: AssistantBlock = { ...last, text: last.text + delta };
+      return [...blocks.slice(0, -1), updated];
+    }
+    return [...blocks, { kind, id: newId(kind), text: delta }];
+  }
+
+  function upsertTool(
+    blocks: AssistantBlock[],
+    toolCallId: string,
+    patch: (tool: ToolBlock) => ToolBlock,
+    fallback: () => ToolBlock,
+  ): AssistantBlock[] {
+    const idx = blocks.findIndex((b) => b.kind === "tool" && b.id === toolCallId);
+    if (idx === -1) return [...blocks, fallback()];
+    const next = blocks.slice();
+    next[idx] = patch(next[idx] as ToolBlock);
+    return next;
+  }
+
   function applyPiEvent(assistantId: string, event: Record<string, unknown>) {
     const eventType = event.type;
+
     if (eventType === "message_update") {
       const assistantMessageEvent = event.assistantMessageEvent as
         | Record<string, unknown>
         | undefined;
       const updateType = assistantMessageEvent?.type;
+
       if (updateType === "text_delta" && typeof assistantMessageEvent?.delta === "string") {
         const delta = assistantMessageEvent.delta;
-        patchAssistant(assistantId, (message) => ({ ...message, text: message.text + delta }));
+        patchAssistant(assistantId, (message) => ({
+          ...message,
+          blocks: appendDelta(message.blocks ?? [], "text", delta),
+        }));
+        return;
       }
+
       if (updateType === "thinking_delta" && typeof assistantMessageEvent?.delta === "string") {
         const delta = assistantMessageEvent.delta;
         patchAssistant(assistantId, (message) => ({
           ...message,
-          thinking: (message.thinking || "") + delta,
+          blocks: appendDelta(message.blocks ?? [], "thinking", delta),
         }));
+        return;
       }
+
       if (updateType === "toolcall_end") {
         const toolCall = assistantMessageEvent?.toolCall as
           | { id?: string; name?: string; arguments?: unknown }
           | undefined;
-        if (toolCall?.id) {
-          patchAssistant(assistantId, (message) => ({
-            ...message,
-            tools: [
-              ...(message.tools || []),
-              {
-                id: toolCall.id || newId("tool"),
-                name: toolCall.name || "tool",
-                status: "running",
-                text: JSON.stringify(toolCall.arguments ?? {}, null, 2),
-              },
-            ],
-          }));
-        }
+        if (!toolCall) return;
+        const id = toolCall.id || newId("tool");
+        const name = toolCall.name || "tool";
+        const text = JSON.stringify(toolCall.arguments ?? {}, null, 2);
+        patchAssistant(assistantId, (message) => ({
+          ...message,
+          blocks: upsertTool(
+            message.blocks ?? [],
+            id,
+            (existing) => ({ ...existing, text: existing.text || text }),
+            () => ({ kind: "tool", id, name, status: "running", text }),
+          ),
+        }));
+        return;
       }
     }
 
     if (eventType === "tool_execution_start") {
-      const toolCallId = String(event.toolCallId || newId("tool"));
-      const toolName = String(event.toolName || "tool");
-      patchAssistant(assistantId, (message) => {
-        const existing = message.tools || [];
-        if (existing.some((tool) => tool.id === toolCallId)) return message;
-        return {
-          ...message,
-          tools: [...existing, { id: toolCallId, name: toolName, status: "running", text: "" }],
-        };
-      });
+      const id = String(event.toolCallId || newId("tool"));
+      const name = String(event.toolName || "tool");
+      patchAssistant(assistantId, (message) => ({
+        ...message,
+        blocks: upsertTool(
+          message.blocks ?? [],
+          id,
+          (existing) => existing,
+          () => ({ kind: "tool", id, name, status: "running", text: "" }),
+        ),
+      }));
+      return;
     }
 
     if (eventType === "tool_execution_update" || eventType === "tool_execution_end") {
-      const toolCallId = String(event.toolCallId || "");
+      const id = String(event.toolCallId || "");
+      if (!id) return;
       const resultText = extractToolText(event.partialResult || event.result);
       patchAssistant(assistantId, (message) => ({
         ...message,
-        tools: (message.tools || []).map((tool) =>
-          tool.id === toolCallId
-            ? {
-                ...tool,
-                status:
-                  eventType === "tool_execution_end"
-                    ? ((event.isError ? "error" : "done") as ToolRecord["status"])
-                    : tool.status,
-                text: resultText || tool.text,
-              }
-            : tool,
+        blocks: upsertTool(
+          message.blocks ?? [],
+          id,
+          (existing) => ({
+            ...existing,
+            status:
+              eventType === "tool_execution_end"
+                ? ((event.isError ? "error" : "done") as ToolBlock["status"])
+                : existing.status,
+            text: resultText || existing.text,
+          }),
+          () => ({
+            kind: "tool",
+            id,
+            name: "tool",
+            status:
+              eventType === "tool_execution_end"
+                ? ((event.isError ? "error" : "done") as ToolBlock["status"])
+                : "running",
+            text: resultText,
+          }),
         ),
       }));
+      return;
     }
 
-    if (eventType === "message_end") {
-      const ended = event.message as
-        | {
-            role?: string;
-            content?: Array<{ type?: string; text?: string; thinking?: string }>;
-            errorMessage?: string;
-          }
-        | undefined;
-      if (ended?.role === "assistant") {
-        const finalText = Array.isArray(ended.content)
-          ? ended.content
-              .map((item) =>
-                item.type === "text" && typeof item.text === "string" ? item.text : "",
-              )
-              .filter(Boolean)
-              .join("\n")
-          : "";
-        const finalThinking = Array.isArray(ended.content)
-          ? ended.content
-              .map((item) =>
-                item.type === "thinking" && typeof item.thinking === "string" ? item.thinking : "",
-              )
-              .filter(Boolean)
-              .join("\n")
-          : "";
-        patchAssistant(assistantId, (message) => ({
-          ...message,
-          text: message.text || finalText || ended.errorMessage || message.text,
-          thinking: message.thinking || finalThinking || message.thinking,
-        }));
-      }
-    }
+    // message_end is intentionally a no-op for assistant content. We've already
+    // streamed all blocks in order via the deltas above; reapplying flattened
+    // text/thinking from the final payload would re-collapse them and lose the
+    // interleaved order.
   }
 
   async function sendMessage(event: FormEvent) {
@@ -468,7 +498,7 @@ export function AgentWorkspace() {
     setMessages((current) => [
       ...current,
       { id: userId, role: "user", text, timestamp: nowLabel() },
-      { id: assistantId, role: "assistant", text: "", tools: [], timestamp: nowLabel() },
+      { id: assistantId, role: "assistant", text: "", blocks: [], timestamp: nowLabel() },
     ]);
 
     try {
@@ -646,20 +676,6 @@ export function AgentWorkspace() {
 
         <button
           type="button"
-          onClick={() => setTerminalOpen((value) => !value)}
-          aria-pressed={terminalOpen}
-          className={`inline-flex h-7 items-center gap-1.5 rounded border px-2 text-xs ${
-            terminalOpen
-              ? "border-(--border) bg-(--surface) text-(--fg)"
-              : "border-transparent text-(--dim) hover:text-(--fg) hover:bg-(--surface)"
-          }`}
-          title="Toggle terminal"
-        >
-          <Terminal className="h-3.5 w-3.5" /> Terminal
-        </button>
-
-        <button
-          type="button"
           onClick={() => setRightPanelOpen((value) => !value)}
           aria-pressed={rightPanelOpen}
           className={`hidden h-7 items-center gap-1.5 rounded border px-2 text-xs xl:inline-flex ${
@@ -699,33 +715,6 @@ export function AgentWorkspace() {
               })()}
             </div>
           </div>
-
-          {terminalOpen ? (
-            <div
-              className="flex shrink-0 flex-col border-t border-(--border) bg-(--surface)"
-              style={{ height: "33%" }}
-            >
-              <div className="flex h-8 shrink-0 items-center justify-between border-b border-(--border) px-3">
-                <div className="flex items-center gap-2 text-xs text-(--dim)">
-                  <Terminal className="h-3.5 w-3.5" />
-                  <span className="font-medium text-(--fg)">Terminal</span>
-                  <span className="truncate font-mono text-[11px]">{agentCwd}</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setTerminalOpen(false)}
-                  className="rounded p-1 text-(--dim) hover:bg-(--bg) hover:text-(--fg)"
-                  title="Close terminal"
-                  aria-label="Close terminal"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-              <div className="min-h-0 flex-1 bg-(--bg)">
-                <PtyTerminal cwd={agentCwd} onClose={() => setTerminalOpen(false)} />
-              </div>
-            </div>
-          ) : null}
 
           <form
             onSubmit={sendMessage}
@@ -897,45 +886,50 @@ function TimelineMessage({ message }: { message: ChatMessage }) {
       </article>
     );
   }
+  const blocks = message.blocks ?? [];
   return (
     <article className="flex flex-col gap-1">
       <div className="text-[11px] font-medium uppercase tracking-wide text-(--dim)">Pi</div>
-      {message.thinking ? (
-        <details className="text-xs">
-          <summary className="cursor-pointer list-none text-[11px] italic text-(--dim) hover:text-(--fg)">
-            Show thinking
-          </summary>
-          <pre className="mt-2 whitespace-pre-wrap border-l-2 border-(--border) pl-3 font-mono text-[11px] leading-5 text-(--dim)">
-            {message.thinking}
-          </pre>
-        </details>
-      ) : null}
-      {message.text ? (
-        <AssistantMarkdown text={message.text} />
-      ) : (
+      {blocks.length === 0 ? (
         <div className="text-sm leading-6 text-(--dim)">…</div>
-      )}
-      {message.tools?.length ? (
-        <div className="mt-1 flex flex-col gap-1">
-          {message.tools.map((tool) => (
-            <details
-              key={tool.id}
-              className="rounded border border-(--border)"
-              open={tool.status === "running"}
-            >
-              <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1 text-[11px] text-(--dim) hover:text-(--fg)">
-                <span className="font-mono font-medium">{tool.name}</span>
-                <span className="opacity-70">· {tool.status}</span>
-              </summary>
-              {tool.text ? (
-                <pre className="overflow-x-auto whitespace-pre-wrap border-t border-(--border) p-2 font-mono text-[11px] leading-5 text-(--fg)">
-                  {tool.text}
-                </pre>
-              ) : null}
-            </details>
-          ))}
+      ) : (
+        <div className="flex flex-col gap-2">
+          {blocks.map((block) => {
+            if (block.kind === "thinking") {
+              return (
+                <details key={block.id} className="text-xs">
+                  <summary className="cursor-pointer list-none text-[11px] italic text-(--dim) hover:text-(--fg)">
+                    Show thinking
+                  </summary>
+                  <pre className="mt-2 whitespace-pre-wrap border-l-2 border-(--border) pl-3 font-mono text-[11px] leading-5 text-(--dim)">
+                    {block.text}
+                  </pre>
+                </details>
+              );
+            }
+            if (block.kind === "text") {
+              return <AssistantMarkdown key={block.id} text={block.text} />;
+            }
+            return (
+              <details
+                key={block.id}
+                className="rounded border border-(--border)"
+                open={block.status === "running"}
+              >
+                <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1 text-[11px] text-(--dim) hover:text-(--fg)">
+                  <span className="font-mono font-medium">{block.name}</span>
+                  <span className="opacity-70">· {block.status}</span>
+                </summary>
+                {block.text ? (
+                  <pre className="overflow-x-auto whitespace-pre-wrap border-t border-(--border) p-2 font-mono text-[11px] leading-5 text-(--fg)">
+                    {block.text}
+                  </pre>
+                ) : null}
+              </details>
+            );
+          })}
         </div>
-      ) : null}
+      )}
     </article>
   );
 }
