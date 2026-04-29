@@ -339,7 +339,7 @@ export function AgentWorkspace() {
         id: newId("system"),
         role: "system",
         timestamp: nowLabel(),
-        text: `New Pi agent thread in ${agentCwd}. Models are still sourced from /v1/models.`,
+        text: "New Pi agent thread. The Project directory field is applied to each Pi turn; models are still sourced from /v1/models.",
       },
     ]);
     setInput("");
