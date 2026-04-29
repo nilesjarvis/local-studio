@@ -78,7 +78,7 @@ export function LeftSidebar({ children }: { children: React.ReactNode }) {
   );
   const isExpanded = desktopSidebarPinnedOpen;
 
-  if (pathname.startsWith("/setup") || pathname.startsWith("/agent")) {
+  if (pathname.startsWith("/setup")) {
     return <div className="h-full w-full">{children}</div>;
   }
 

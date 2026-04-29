@@ -1,25 +1,15 @@
 "use client";
 
-import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
-  Archive,
-  Bot,
   ChevronDown,
-  Diff,
   Folder,
-  FolderOpen,
   GitBranch,
-  Globe,
-  Home,
-  MessageSquare,
   Plus,
   RotateCcw,
-  Search,
   Send,
-  Settings,
   Square,
   Terminal,
   Trash2,
@@ -136,7 +126,6 @@ export function AgentWorkspace() {
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState("");
   const [loadingModels, setLoadingModels] = useState(true);
-  const [modelFilter, setModelFilter] = useState("");
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [isMultiline, setIsMultiline] = useState(false);
@@ -158,13 +147,7 @@ export function AgentWorkspace() {
     () => models.find((model) => model.id === selectedModel),
     [models, selectedModel],
   );
-  const visibleModels = useMemo(() => {
-    const query = modelFilter.trim().toLowerCase();
-    if (!query) return models;
-    return models.filter((model) => `${model.name} ${model.id}`.toLowerCase().includes(query));
-  }, [models, modelFilter]);
   const running = status === "running" || status === "starting";
-  const toolCount = messages.reduce((sum, message) => sum + (message.tools?.length || 0), 0);
 
   useEffect(() => {
     let cancelled = false;
@@ -602,418 +585,278 @@ export function AgentWorkspace() {
     setError("");
   }
 
+  const activeProject = useMemo(
+    () => projects.find((entry) => entry.id === selectedProjectId) || null,
+    [projects, selectedProjectId],
+  );
+
   return (
-    <div className="agent-shell flex h-[100dvh] min-h-0 bg-[var(--agent-bg)] text-[var(--agent-fg)]">
-      <aside className="flex w-[288px] shrink-0 flex-col border-r border-[var(--agent-border)] bg-[var(--agent-card)]">
-        <div className="flex h-12 items-center gap-2 border-b border-[var(--agent-border)] px-3">
-          <div className="flex size-7 items-center justify-center rounded-md border border-[var(--agent-border)] bg-[var(--agent-bg)]">
-            <Bot className="size-4" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium">T3 Code</div>
-            <div className="truncate text-[11px] text-[var(--agent-muted)]">
-              Pi provider / vLLM Studio
-            </div>
-          </div>
-          <Link
-            href="/"
-            className="flex size-7 items-center justify-center rounded-md text-[var(--agent-muted)] hover:bg-[var(--agent-muted-bg)] hover:text-[var(--agent-fg)]"
-            title="Back to vLLM Studio"
-          >
-            <Home className="size-4" />
-          </Link>
-        </div>
-
-        <div className="space-y-2 border-b border-[var(--agent-border)] p-3">
-          <button
-            type="button"
-            onClick={newThread}
-            className="flex h-8 w-full items-center justify-center gap-2 rounded-md bg-[var(--agent-primary)] px-3 text-sm font-medium text-white hover:opacity-95"
-          >
-            <Plus className="size-4" /> New thread
-          </button>
-          <label className="flex h-8 items-center gap-2 rounded-md border border-[var(--agent-border)] bg-[var(--agent-bg)] px-2 text-[var(--agent-muted)]">
-            <Search className="size-3.5" />
-            <input
-              value={modelFilter}
-              onChange={(event) => setModelFilter(event.target.value)}
-              placeholder="Search models"
-              className="min-w-0 flex-1 bg-transparent text-xs text-[var(--agent-fg)] outline-none placeholder:text-[var(--agent-muted)]"
-            />
-          </label>
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-y-auto p-2">
-          <SectionLabel>Project</SectionLabel>
-          {projects.length === 0 ? (
-            <div className="mb-2 rounded-md border border-dashed border-[var(--agent-border)] bg-[var(--agent-bg)] px-2 py-2 text-[11px] text-[var(--agent-muted)]">
-              No projects yet. Open a directory to get started.
-            </div>
-          ) : (
-            <div className="mb-1 space-y-1">
-              {projects.map((project) => (
-                <ProjectRow
-                  key={project.id}
-                  project={project}
-                  active={project.id === selectedProjectId}
-                  onSelect={() => selectProject(project)}
-                  onRemove={() => void removeProjectById(project.id)}
-                />
-              ))}
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={() => void handleOpenProject()}
-            className="mb-2 mt-1 flex h-8 w-full items-center justify-center gap-2 rounded-md border border-dashed border-[var(--agent-border)] bg-[var(--agent-bg)] px-2 text-xs text-[var(--agent-muted)] hover:bg-[var(--agent-muted-bg)] hover:text-[var(--agent-fg)]"
-          >
-            <Plus className="size-3.5" /> Open project…
-          </button>
-          {projectPickerOpen ? (
-            <form
-              onSubmit={submitProjectPicker}
-              className="mb-3 space-y-1 rounded-md border border-[var(--agent-border)] bg-[var(--agent-bg)] p-2"
-            >
-              <label className="block text-[10px] uppercase tracking-wide text-[var(--agent-muted)]">
-                Absolute directory path
-              </label>
-              <input
-                value={projectPickerInput}
-                onChange={(event) => setProjectPickerInput(event.target.value)}
-                placeholder="/Users/you/code/my-project"
-                spellCheck={false}
-                autoFocus
-                className="min-w-0 w-full rounded-md border border-[var(--agent-border)] bg-[var(--agent-card)] px-2 py-1 font-mono text-[11px] text-[var(--agent-fg)] outline-none"
-              />
-              {projectPickerError ? (
-                <div className="text-[11px] text-red-600">{projectPickerError}</div>
-              ) : null}
-              <div className="flex items-center justify-end gap-1 pt-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setProjectPickerOpen(false);
-                    setProjectPickerInput("");
-                    setProjectPickerError("");
-                  }}
-                  className="h-7 rounded-md px-2 text-[11px] text-[var(--agent-muted)] hover:bg-[var(--agent-muted-bg)] hover:text-[var(--agent-fg)]"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="h-7 rounded-md bg-[var(--agent-primary)] px-2 text-[11px] font-medium text-white hover:opacity-95"
-                >
-                  Add
-                </button>
-              </div>
-            </form>
-          ) : null}
-          <label className="mb-3 mt-1 flex items-center gap-2 rounded-md border border-[var(--agent-border)] bg-[var(--agent-bg)] px-2 py-1.5 text-[var(--agent-muted)]">
-            <FolderOpen className="size-3.5 shrink-0" />
-            <input
-              value={agentCwd}
-              onChange={(event) => handleCwdInputChange(event.target.value)}
-              disabled={running}
-              spellCheck={false}
-              className="min-w-0 flex-1 bg-transparent font-mono text-[11px] text-[var(--agent-fg)] outline-none disabled:opacity-60"
-              aria-label="Agent working directory"
-            />
-          </label>
-          <SectionLabel className="mt-4">Threads</SectionLabel>
-          <ThreadRow
-            active
-            title="Pi agent thread"
-            subtitle={`${messages.length} messages · ${toolCount} tools`}
-            icon={MessageSquare}
-          />
-          <ThreadRow title="Archived plans" subtitle="No synced history yet" icon={Archive} muted />
-        </div>
-
-        <div className="border-t border-[var(--agent-border)] p-3 text-xs text-[var(--agent-muted)]">
-          <div className="mb-2 flex items-center justify-between">
-            <span>Provider</span>
-            <span className="rounded bg-[var(--agent-muted-bg)] px-1.5 py-0.5">Pi</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span>Models</span>
-            <span>{loadingModels ? "loading" : models.length}</span>
-          </div>
-        </div>
-      </aside>
-
-      <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-12 shrink-0 items-center gap-3 border-b border-[var(--agent-border)] bg-[var(--agent-bg)] px-3">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <h1 className="truncate text-sm font-medium">Pi agent thread</h1>
-              <span className="rounded-md border border-[var(--agent-border)] px-1.5 py-0.5 text-[11px] text-[var(--agent-muted)]">
-                vLLM Studio
-              </span>
-              {activeModel?.reasoning ? (
-                <span className="rounded-md border border-blue-500/20 bg-blue-500/10 px-1.5 py-0.5 text-[11px] text-blue-700">
-                  thinking
+    <div className="flex h-[calc(100dvh-2.5rem)] min-h-0 w-full flex-col bg-(--bg) text-(--fg) md:h-[100dvh]">
+      <header className="flex h-11 shrink-0 items-center gap-3 border-b border-(--border) px-4">
+        <div className="flex items-center gap-1.5 text-sm">
+          <span className="font-semibold tracking-tight">Agent</span>
+          {activeProject ? (
+            <span className="hidden items-center gap-1 truncate text-xs text-(--dim) sm:inline-flex">
+              <span className="opacity-60">/</span>
+              <span className="truncate">{activeProject.name}</span>
+              {activeProject.hasGit && activeProject.branch ? (
+                <span className="ml-1 inline-flex items-center gap-1 rounded border border-(--border) px-1 py-0.5 font-mono text-[10px]">
+                  <GitBranch className="h-3 w-3" />
+                  {activeProject.branch}
                 </span>
               ) : null}
-            </div>
-          </div>
+            </span>
+          ) : null}
+        </div>
 
-          <button
-            className={`agent-toolbar-button ${
-              terminalOpen ? "bg-[var(--agent-muted-bg)] font-bold text-[var(--agent-fg)]" : ""
-            }`}
-            type="button"
-            onClick={() => setTerminalOpen((value) => !value)}
-            title="Terminal drawer"
-          >
-            <Terminal className="size-3.5" /> Terminal
-          </button>
-          <button
-            className="agent-toolbar-button"
-            type="button"
-            onClick={() => setRightPanelOpen((value) => !value)}
-            title="Diff panel"
-          >
-            <Diff className="size-3.5" /> Diff
-          </button>
-          <button className="agent-toolbar-icon" type="button" title="Settings">
-            <Settings className="size-4" />
-          </button>
-        </header>
+        <div className="flex-1" />
 
-        {error ? (
-          <div className="border-b border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-700">
-            {error}
-          </div>
-        ) : null}
+        <ProjectPicker
+          projects={projects}
+          activeId={selectedProjectId}
+          onSelect={selectProject}
+          onOpen={() => void handleOpenProject()}
+          onRemove={(id) => void removeProjectById(id)}
+          pickerOpen={projectPickerOpen}
+          onPickerOpenChange={setProjectPickerOpen}
+          pickerInput={projectPickerInput}
+          onPickerInputChange={setProjectPickerInput}
+          pickerError={projectPickerError}
+          onPickerSubmit={submitProjectPicker}
+          onPickerCancel={() => {
+            setProjectPickerOpen(false);
+            setProjectPickerInput("");
+            setProjectPickerError("");
+          }}
+          cwd={agentCwd}
+          onCwdChange={handleCwdInputChange}
+          running={running}
+        />
 
-        <div className="flex min-h-0 flex-1">
-          <section className="flex min-w-0 flex-1 flex-col">
-            <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-6">
-              <div className="mx-auto w-full max-w-3xl">
-                {(() => {
-                  const visible = messages.filter((message) => message.role !== "system");
-                  if (visible.length === 0 && !running) {
-                    return <ChatEmptyState />;
-                  }
-                  return (
-                    <div className="space-y-4">
-                      {visible.map((message) => (
-                        <TimelineMessage key={message.id} message={message} />
-                      ))}
-                      {running ? <WorkingRow status={status} /> : null}
-                    </div>
-                  );
-                })()}
-              </div>
-            </div>
+        <button
+          type="button"
+          onClick={newThread}
+          className="inline-flex h-7 items-center gap-1.5 rounded border border-(--border) bg-(--surface) px-2 text-xs text-(--fg) hover:bg-(--bg)"
+          title="Start a fresh thread"
+        >
+          <Plus className="h-3.5 w-3.5" /> New thread
+        </button>
 
-            {terminalOpen ? (
-              <TerminalDrawer cwd={agentCwd} onClose={() => setTerminalOpen(false)} />
-            ) : null}
+        <button
+          type="button"
+          onClick={() => setTerminalOpen((value) => !value)}
+          aria-pressed={terminalOpen}
+          className={`inline-flex h-7 items-center gap-1.5 rounded border px-2 text-xs ${
+            terminalOpen
+              ? "border-(--border) bg-(--surface) text-(--fg)"
+              : "border-transparent text-(--dim) hover:text-(--fg) hover:bg-(--surface)"
+          }`}
+          title="Toggle terminal"
+        >
+          <Terminal className="h-3.5 w-3.5" /> Terminal
+        </button>
 
-            <form
-              onSubmit={sendMessage}
-              className="shrink-0 border-t border-[var(--agent-border)] bg-[var(--agent-bg)] px-4 py-3"
-            >
-              <div
-                className={`mx-auto max-w-3xl rounded-xl border bg-[var(--agent-card)] shadow-sm ${
-                  isMultiline
-                    ? "border-[var(--agent-primary)]/50 ring-1 ring-[var(--agent-primary)]/40"
-                    : "border-[var(--agent-border)]"
-                }`}
-              >
-                <textarea
-                  ref={textareaRef}
-                  value={input}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setInput(value);
-                    const element = event.currentTarget;
-                    if (!value) {
-                      element.style.height = "";
-                      setIsMultiline(false);
-                      return;
-                    }
-                    element.style.height = "auto";
-                    element.style.height = `${element.scrollHeight}px`;
-                    setIsMultiline(element.scrollHeight > 44);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && !event.shiftKey) {
-                      event.preventDefault();
-                      event.currentTarget.form?.requestSubmit();
-                    }
-                  }}
-                  placeholder={
-                    activeModel
-                      ? `Ask ${activeModel.name} to edit, inspect, or run commands...`
-                      : "Load a /v1/models entry first..."
-                  }
-                  className="min-h-[40px] max-h-[240px] w-full resize-none overflow-y-auto rounded-t-xl bg-transparent px-3 py-2 text-sm leading-6 outline-none placeholder:text-[var(--agent-muted)]"
-                />
-                <div className="flex items-center gap-2 border-t border-[var(--agent-border)] px-2 py-2">
-                  <select
-                    className="h-8 max-w-[260px] rounded-md border border-[var(--agent-border)] bg-[var(--agent-bg)] px-2 text-xs outline-none"
-                    value={selectedModel}
-                    onChange={(event) => setSelectedModel(event.target.value)}
-                    disabled={loadingModels || running}
-                  >
-                    {visibleModels.map((model) => (
-                      <option key={model.id} value={model.id}>
-                        {model.name}
-                      </option>
+        <button
+          type="button"
+          onClick={() => setRightPanelOpen((value) => !value)}
+          aria-pressed={rightPanelOpen}
+          className={`hidden h-7 items-center gap-1.5 rounded border px-2 text-xs xl:inline-flex ${
+            rightPanelOpen
+              ? "border-(--border) bg-(--surface) text-(--fg)"
+              : "border-transparent text-(--dim) hover:text-(--fg) hover:bg-(--surface)"
+          }`}
+          title="Toggle browser"
+        >
+          Browser
+        </button>
+      </header>
+
+      {error ? (
+        <div className="border-b border-(--border) bg-(--err)/10 px-4 py-2 text-xs text-(--err)">
+          {error}
+        </div>
+      ) : null}
+
+      <div className="flex min-h-0 flex-1">
+        <section className="flex min-w-0 flex-1 flex-col">
+          <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
+            <div className="mx-auto w-full max-w-2xl">
+              {(() => {
+                const visible = messages.filter((message) => message.role !== "system");
+                if (visible.length === 0 && !running) {
+                  return <ChatEmptyState />;
+                }
+                return (
+                  <div className="space-y-6">
+                    {visible.map((message) => (
+                      <TimelineMessage key={message.id} message={message} />
                     ))}
-                  </select>
-                  <div className="flex-1" />
+                    {running ? <WorkingRow status={status} /> : null}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+
+          {terminalOpen ? (
+            <TerminalDrawer cwd={agentCwd} onClose={() => setTerminalOpen(false)} />
+          ) : null}
+
+          <form
+            onSubmit={sendMessage}
+            className="shrink-0 border-t border-(--border) bg-(--bg) px-6 py-3"
+          >
+            <div
+              className={`mx-auto max-w-2xl rounded-lg border bg-(--surface) ${
+                isMultiline ? "border-(--accent)/60 ring-1 ring-(--accent)/30" : "border-(--border)"
+              }`}
+            >
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setInput(value);
+                  const element = event.currentTarget;
+                  if (!value) {
+                    element.style.height = "";
+                    setIsMultiline(false);
+                    return;
+                  }
+                  element.style.height = "auto";
+                  element.style.height = `${element.scrollHeight}px`;
+                  setIsMultiline(element.scrollHeight > 44);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    event.currentTarget.form?.requestSubmit();
+                  }
+                }}
+                placeholder={
+                  activeModel
+                    ? `Ask ${activeModel.name}…`
+                    : loadingModels
+                      ? "Loading models…"
+                      : "No models available — check /v1/models"
+                }
+                className="min-h-[40px] max-h-[240px] w-full resize-none overflow-y-auto bg-transparent px-3 py-2 text-sm leading-6 text-(--fg) outline-none placeholder:text-(--dim)"
+              />
+              <div className="flex items-center gap-2 border-t border-(--border) px-2 py-1.5">
+                <select
+                  className="h-7 max-w-[280px] rounded border border-(--border) bg-(--bg) px-2 text-xs text-(--fg) outline-none"
+                  value={selectedModel}
+                  onChange={(event) => setSelectedModel(event.target.value)}
+                  disabled={loadingModels || running}
+                >
+                  {models.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex-1" />
+                {running ? (
                   <button
                     type="button"
                     onClick={() => void abortTurn()}
-                    disabled={!running}
-                    className="agent-compose-button disabled:opacity-40"
+                    className="inline-flex h-7 items-center gap-1.5 rounded border border-(--border) bg-(--bg) px-2 text-xs text-(--dim) hover:text-(--fg)"
                   >
-                    <Square className="size-3.5" /> Stop
+                    <Square className="h-3 w-3" /> Stop
                   </button>
+                ) : (
                   <button
                     type="submit"
-                    disabled={!input.trim() || !selectedModel || running}
-                    className="flex h-8 items-center gap-2 rounded-md bg-[var(--agent-primary)] px-3 text-sm font-medium text-white disabled:opacity-40"
+                    disabled={!input.trim() || !selectedModel}
+                    className="inline-flex h-7 items-center gap-1.5 rounded bg-(--fg) px-2.5 text-xs font-medium text-(--bg) disabled:opacity-30"
                   >
-                    <Send className="size-3.5" /> Send
+                    <Send className="h-3 w-3" /> Send
                   </button>
-                </div>
-              </div>
-            </form>
-          </section>
-
-          {rightPanelOpen ? (
-            <aside className="hidden w-[480px] shrink-0 border-l border-[var(--agent-border)] bg-[var(--agent-card)] xl:flex xl:flex-col">
-              <div className="flex h-12 items-center justify-between border-b border-[var(--agent-border)] px-3">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <Globe className="size-4" /> Browser
-                </div>
-                <button
-                  className="agent-toolbar-icon"
-                  type="button"
-                  onClick={() => setRightPanelOpen(false)}
-                >
-                  <ChevronDown className="size-4 rotate-[-90deg]" />
-                </button>
-              </div>
-              <form
-                onSubmit={submitBrowserUrl}
-                className="flex shrink-0 items-center gap-1 border-b border-[var(--agent-border)] bg-[var(--agent-bg)] px-2 py-2"
-              >
-                <button
-                  type="button"
-                  onClick={browserBack}
-                  className="agent-toolbar-icon"
-                  title="Back"
-                >
-                  <ArrowLeft className="size-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={browserForward}
-                  className="agent-toolbar-icon"
-                  title="Forward"
-                >
-                  <ArrowRight className="size-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={browserReload}
-                  className="agent-toolbar-icon"
-                  title="Reload"
-                >
-                  <RotateCcw className="size-4" />
-                </button>
-                <input
-                  value={browserInput}
-                  onChange={(event) => setBrowserInput(event.target.value)}
-                  spellCheck={false}
-                  placeholder="Search or enter URL"
-                  className="min-w-0 flex-1 rounded-md border border-[var(--agent-border)] bg-[var(--agent-bg)] px-2 py-1 font-mono text-[11px] text-[var(--agent-fg)] outline-none placeholder:text-[var(--agent-muted)]"
-                  aria-label="Browser address"
-                />
-                <button
-                  type="submit"
-                  className="h-7 rounded-md bg-[var(--agent-primary)] px-2 text-xs font-medium text-white hover:opacity-95"
-                >
-                  Go
-                </button>
-              </form>
-              <div className="min-h-0 flex-1 bg-white">
-                {isElectron ? (
-                  <webview
-                    ref={(node) => {
-                      webviewRef.current = (node as unknown as WebviewElement) ?? null;
-                    }}
-                    src={browserUrl}
-                    allowpopups={true}
-                    className="size-full"
-                    style={{ width: "100%", height: "100%", display: "flex" }}
-                  />
-                ) : (
-                  <iframe
-                    ref={iframeRef}
-                    src={browserUrl}
-                    className="size-full"
-                    sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-                    title="Agent browser"
-                  />
                 )}
               </div>
-            </aside>
-          ) : null}
-        </div>
-      </main>
-    </div>
-  );
-}
+            </div>
+          </form>
+        </section>
 
-function SectionLabel({
-  children,
-  className = "",
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <div
-      className={`mb-1 px-2 text-[11px] font-medium uppercase tracking-wide text-[var(--agent-muted)] ${className}`}
-    >
-      {children}
+        {rightPanelOpen ? (
+          <aside className="hidden w-[440px] shrink-0 flex-col border-l border-(--border) bg-(--bg) xl:flex">
+            <div className="flex h-9 shrink-0 items-center justify-between border-b border-(--border) px-3 text-xs text-(--dim)">
+              <span className="font-medium uppercase tracking-wide">Browser</span>
+              <button
+                type="button"
+                onClick={() => setRightPanelOpen(false)}
+                className="rounded p-1 hover:bg-(--surface) hover:text-(--fg)"
+                title="Close"
+                aria-label="Close browser"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <form
+              onSubmit={submitBrowserUrl}
+              className="flex shrink-0 items-center gap-1 border-b border-(--border) px-2 py-1.5"
+            >
+              <button
+                type="button"
+                onClick={browserBack}
+                className="rounded p-1 text-(--dim) hover:bg-(--surface) hover:text-(--fg)"
+                title="Back"
+                aria-label="Back"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={browserForward}
+                className="rounded p-1 text-(--dim) hover:bg-(--surface) hover:text-(--fg)"
+                title="Forward"
+                aria-label="Forward"
+              >
+                <ArrowRight className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={browserReload}
+                className="rounded p-1 text-(--dim) hover:bg-(--surface) hover:text-(--fg)"
+                title="Reload"
+                aria-label="Reload"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+              </button>
+              <input
+                value={browserInput}
+                onChange={(event) => setBrowserInput(event.target.value)}
+                spellCheck={false}
+                placeholder="Search or enter URL"
+                className="min-w-0 flex-1 rounded border border-(--border) bg-(--surface) px-2 py-1 font-mono text-[11px] text-(--fg) outline-none placeholder:text-(--dim)"
+                aria-label="Browser address"
+              />
+            </form>
+            <div className="min-h-0 flex-1 bg-white">
+              {isElectron ? (
+                <webview
+                  ref={(node) => {
+                    webviewRef.current = (node as unknown as WebviewElement) ?? null;
+                  }}
+                  src={browserUrl}
+                  allowpopups={true}
+                  className="size-full"
+                  style={{ width: "100%", height: "100%", display: "flex" }}
+                />
+              ) : (
+                <iframe
+                  ref={iframeRef}
+                  src={browserUrl}
+                  className="size-full"
+                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                  title="Agent browser"
+                />
+              )}
+            </div>
+          </aside>
+        ) : null}
+      </div>
     </div>
-  );
-}
-
-function ThreadRow({
-  title,
-  subtitle,
-  icon: Icon,
-  active = false,
-  muted = false,
-}: {
-  title: string;
-  subtitle: string;
-  icon: React.ComponentType<{ className?: string }>;
-  active?: boolean;
-  muted?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      className={`mb-1 flex w-full items-start gap-2 rounded-md px-2 py-2 text-left ${
-        active ? "bg-[var(--agent-muted-bg)]" : "hover:bg-[var(--agent-muted-bg)]"
-      } ${muted ? "opacity-60" : ""}`}
-    >
-      <Icon className="mt-0.5 size-4 shrink-0 text-[var(--agent-muted)]" />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium">{title}</span>
-        <span className="block truncate text-xs text-[var(--agent-muted)]">{subtitle}</span>
-      </span>
-    </button>
   );
 }
 
@@ -1021,42 +864,44 @@ function TimelineMessage({ message }: { message: ChatMessage }) {
   const isUser = message.role === "user";
   if (isUser) {
     return (
-      <article className="flex justify-end">
-        <div className="max-w-[75%] rounded-2xl rounded-br-md bg-[var(--agent-muted-bg)] px-3 py-2 text-sm leading-6 whitespace-pre-wrap break-words">
+      <article className="flex flex-col gap-1">
+        <div className="text-[11px] font-medium uppercase tracking-wide text-(--dim)">You</div>
+        <div className="whitespace-pre-wrap break-words text-sm leading-6 text-(--fg)">
           {message.text}
         </div>
       </article>
     );
   }
   return (
-    <article className="min-w-0">
+    <article className="flex flex-col gap-1">
+      <div className="text-[11px] font-medium uppercase tracking-wide text-(--dim)">Pi</div>
+      <div className="chat-markdown whitespace-pre-wrap text-sm leading-6 text-(--fg)">
+        {message.text || <span className="text-(--dim)">…</span>}
+      </div>
       {message.thinking ? (
-        <details className="mb-2 text-xs">
-          <summary className="cursor-pointer list-none text-[11px] italic text-[var(--agent-muted)] hover:text-[var(--agent-fg)]">
-            Thinking
+        <details className="mt-1 text-xs">
+          <summary className="cursor-pointer list-none text-[11px] italic text-(--dim) hover:text-(--fg)">
+            Show thinking
           </summary>
-          <pre className="mt-2 whitespace-pre-wrap border-t border-[var(--agent-border)] pt-2 font-mono text-[11px] leading-5 text-[var(--agent-muted)]">
+          <pre className="mt-2 whitespace-pre-wrap border-l-2 border-(--border) pl-3 font-mono text-[11px] leading-5 text-(--dim)">
             {message.thinking}
           </pre>
         </details>
       ) : null}
-      <div className="chat-markdown whitespace-pre-wrap text-sm leading-6">
-        {message.text || "…"}
-      </div>
       {message.tools?.length ? (
-        <div className="mt-2 flex flex-col gap-1">
+        <div className="mt-1 flex flex-col gap-1">
           {message.tools.map((tool) => (
             <details
               key={tool.id}
-              className="rounded border border-[var(--agent-border)]"
+              className="rounded border border-(--border)"
               open={tool.status === "running"}
             >
-              <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1 text-[11px] text-[var(--agent-muted)] hover:text-[var(--agent-fg)]">
-                <span className="font-medium">{tool.name}</span>
-                <span className="opacity-70">{tool.status}</span>
+              <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1 text-[11px] text-(--dim) hover:text-(--fg)">
+                <span className="font-mono font-medium">{tool.name}</span>
+                <span className="opacity-70">· {tool.status}</span>
               </summary>
               {tool.text ? (
-                <pre className="overflow-x-auto whitespace-pre-wrap border-t border-[var(--agent-border)] p-2 font-mono text-[11px] leading-5">
+                <pre className="overflow-x-auto whitespace-pre-wrap border-t border-(--border) p-2 font-mono text-[11px] leading-5 text-(--fg)">
                   {tool.text}
                 </pre>
               ) : null}
@@ -1070,12 +915,157 @@ function TimelineMessage({ message }: { message: ChatMessage }) {
 
 function ChatEmptyState() {
   return (
-    <div className="flex min-h-[40vh] items-center justify-center px-6 text-center">
-      <p className="text-sm text-[var(--agent-muted)]">
-        Start a thread by asking the model to do something.
-      </p>
+    <div className="flex min-h-[40vh] items-center justify-center text-center">
+      <p className="text-sm text-(--dim)">Ask the agent to edit, inspect, or run something.</p>
     </div>
   );
+}
+
+function ProjectPicker({
+  projects,
+  activeId,
+  onSelect,
+  onOpen,
+  onRemove,
+  pickerOpen,
+  onPickerOpenChange,
+  pickerInput,
+  onPickerInputChange,
+  pickerError,
+  onPickerSubmit,
+  onPickerCancel,
+  cwd,
+  onCwdChange,
+  running,
+}: {
+  projects: ProjectEntry[];
+  activeId: string | null;
+  onSelect: (project: ProjectEntry) => void;
+  onOpen: () => void;
+  onRemove: (id: string) => void;
+  pickerOpen: boolean;
+  onPickerOpenChange: (value: boolean) => void;
+  pickerInput: string;
+  onPickerInputChange: (value: string) => void;
+  pickerError: string;
+  onPickerSubmit: (event: FormEvent) => void;
+  onPickerCancel: () => void;
+  cwd: string;
+  onCwdChange: (value: string) => void;
+  running: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const active = projects.find((entry) => entry.id === activeId) || null;
+
+  useEffect(() => {
+    if (!open) return;
+    function onDocClick(event: MouseEvent) {
+      if (!containerRef.current) return;
+      if (!containerRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [open]);
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="inline-flex h-7 max-w-[260px] items-center gap-1.5 rounded border border-(--border) bg-(--surface) px-2 text-xs text-(--fg) hover:bg-(--bg)"
+        title={active?.path || "No project selected"}
+      >
+        <Folder className="h-3.5 w-3.5 shrink-0 text-(--dim)" />
+        <span className="truncate">{active?.name || "Choose project"}</span>
+        <ChevronDown className="h-3 w-3 shrink-0 text-(--dim)" />
+      </button>
+      {open ? (
+        <div className="absolute right-0 top-9 z-50 w-80 overflow-hidden rounded-md border border-(--border) bg-(--surface) shadow-lg">
+          <div className="max-h-72 overflow-y-auto p-1">
+            {projects.length === 0 ? (
+              <div className="px-3 py-4 text-center text-xs text-(--dim)">
+                No projects yet. Open a directory to get started.
+              </div>
+            ) : (
+              projects.map((project) => (
+                <ProjectRow
+                  key={project.id}
+                  project={project}
+                  active={project.id === activeId}
+                  onSelect={() => {
+                    onSelect(project);
+                    setOpen(false);
+                  }}
+                  onRemove={() => onRemove(project.id)}
+                />
+              ))
+            )}
+          </div>
+          <div className="border-t border-(--border) p-2">
+            {pickerOpen ? (
+              <form onSubmit={onPickerSubmit} className="space-y-1.5">
+                <input
+                  value={pickerInput}
+                  onChange={(event) => onPickerInputChange(event.target.value)}
+                  placeholder="/Users/you/code/my-project"
+                  spellCheck={false}
+                  autoFocus
+                  className="w-full rounded border border-(--border) bg-(--bg) px-2 py-1 font-mono text-[11px] text-(--fg) outline-none"
+                />
+                {pickerError ? <div className="text-[11px] text-(--err)">{pickerError}</div> : null}
+                <div className="flex items-center justify-end gap-1">
+                  <button
+                    type="button"
+                    onClick={onPickerCancel}
+                    className="h-6 rounded px-2 text-[11px] text-(--dim) hover:bg-(--bg) hover:text-(--fg)"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="h-6 rounded bg-(--fg) px-2 text-[11px] font-medium text-(--bg)"
+                  >
+                    Add
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  onOpen();
+                  // Keep dropdown open so the inline form (web fallback) remains visible.
+                  if (!isLikelyElectron()) onPickerOpenChange(true);
+                }}
+                className="flex w-full items-center justify-center gap-1.5 rounded border border-dashed border-(--border) px-2 py-1.5 text-xs text-(--dim) hover:bg-(--bg) hover:text-(--fg)"
+              >
+                <Plus className="h-3.5 w-3.5" /> Open project…
+              </button>
+            )}
+          </div>
+          <div className="border-t border-(--border) p-2">
+            <label className="block text-[10px] uppercase tracking-wide text-(--dim)">cwd</label>
+            <input
+              value={cwd}
+              onChange={(event) => onCwdChange(event.target.value)}
+              disabled={running}
+              spellCheck={false}
+              className="mt-1 w-full rounded border border-(--border) bg-(--bg) px-2 py-1 font-mono text-[11px] text-(--fg) outline-none disabled:opacity-60"
+              aria-label="Agent working directory"
+            />
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function isLikelyElectron(): boolean {
+  if (typeof window === "undefined") return false;
+  return /electron/i.test(navigator.userAgent);
 }
 
 function ProjectRow({
@@ -1089,76 +1079,56 @@ function ProjectRow({
   onSelect: () => void;
   onRemove: () => void;
 }) {
-  const [menuOpen, setMenuOpen] = useState(false);
   return (
-    <div className="relative">
+    <div
+      className={`group flex items-start gap-2 rounded px-2 py-1.5 text-left ${
+        active ? "bg-(--bg)" : "hover:bg-(--bg)"
+      } ${project.exists ? "" : "opacity-60"}`}
+    >
       <button
         type="button"
         onClick={onSelect}
         title={project.path}
-        className={`flex w-full items-start gap-2 rounded-md px-2 py-2 text-left ${
-          active ? "bg-[var(--agent-muted-bg)]" : "hover:bg-[var(--agent-muted-bg)]"
-        } ${project.exists ? "" : "opacity-60"}`}
+        className="flex min-w-0 flex-1 items-start gap-2 text-left"
       >
-        <Folder className="mt-0.5 size-4 shrink-0 text-[var(--agent-muted)]" />
+        <Folder className="mt-0.5 h-3.5 w-3.5 shrink-0 text-(--dim)" />
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1.5">
-            <span className="truncate text-sm font-medium">{project.name}</span>
+            <span className="truncate text-xs font-medium text-(--fg)">{project.name}</span>
             {project.hasGit && project.branch ? (
-              <span className="flex items-center gap-1 rounded bg-[var(--agent-bg)] px-1 py-0.5 text-[10px] text-[var(--agent-muted)]">
-                <GitBranch className="size-3" />
+              <span className="inline-flex items-center gap-1 rounded border border-(--border) px-1 font-mono text-[10px] text-(--dim)">
+                <GitBranch className="h-2.5 w-2.5" />
                 <span className="max-w-[80px] truncate">{project.branch}</span>
               </span>
             ) : null}
           </span>
-          <span className="block truncate text-[11px] text-[var(--agent-muted)]">
-            {project.path}
-          </span>
-          {!project.exists ? (
-            <span className="mt-0.5 block text-[10px] text-red-500">missing</span>
-          ) : null}
-        </span>
-        <span
-          role="button"
-          tabIndex={0}
-          aria-label="Project actions"
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            setMenuOpen((value) => !value);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              event.stopPropagation();
-              setMenuOpen((value) => !value);
-            }
-          }}
-          className="mt-0.5 rounded p-0.5 text-[var(--agent-muted)] hover:bg-[var(--agent-bg)] hover:text-[var(--agent-fg)]"
-        >
-          <ChevronDown className="size-3.5" />
+          <span className="block truncate text-[10px] text-(--dim)">{project.path}</span>
         </span>
       </button>
-      {menuOpen ? (
-        <div className="absolute right-1 top-9 z-10 w-44 overflow-hidden rounded-md border border-[var(--agent-border)] bg-[var(--agent-card)] shadow-md">
-          <button
-            type="button"
-            onClick={() => {
-              setMenuOpen(false);
-              onRemove();
-            }}
-            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-red-600 hover:bg-[var(--agent-muted-bg)]"
-          >
-            <Trash2 className="size-3.5" /> Remove from list
-          </button>
-        </div>
-      ) : null}
+      <button
+        type="button"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onRemove();
+        }}
+        className="mt-0.5 rounded p-0.5 text-(--dim) opacity-0 hover:bg-(--surface) hover:text-(--err) group-hover:opacity-100"
+        title="Remove from list"
+        aria-label="Remove project"
+      >
+        <Trash2 className="h-3 w-3" />
+      </button>
     </div>
   );
 }
 
 function WorkingRow({ status }: { status: string }) {
-  return <div className="text-sm italic text-[var(--agent-muted)]">Pi is {status}…</div>;
+  return (
+    <div className="flex items-center gap-2 text-xs text-(--dim)">
+      <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-(--dim)" />
+      <span>Pi is {status}…</span>
+    </div>
+  );
 }
 
 type TerminalLine = {
@@ -1387,41 +1357,41 @@ function TerminalDrawer({ cwd, onClose }: { cwd: string; onClose: () => void }) 
 
   return (
     <div
-      className="flex shrink-0 flex-col border-t border-[var(--agent-border)] bg-[var(--agent-card)]"
+      className="flex shrink-0 flex-col border-t border-(--border) bg-(--surface)"
       style={{ height: "33%" }}
     >
-      <div className="flex h-8 shrink-0 items-center justify-between border-b border-[var(--agent-border)] bg-[var(--agent-bg)] px-3">
-        <div className="flex items-center gap-2 text-xs text-[var(--agent-muted)]">
-          <Terminal className="size-3.5" />
-          <span className="font-medium text-[var(--agent-fg)]">Terminal</span>
+      <div className="flex h-8 shrink-0 items-center justify-between border-b border-(--border) px-3">
+        <div className="flex items-center gap-2 text-xs text-(--dim)">
+          <Terminal className="h-3.5 w-3.5" />
+          <span className="font-medium text-(--fg)">Terminal</span>
           <span className="truncate font-mono text-[11px]">{cwd}</span>
         </div>
         <button
           type="button"
           onClick={onClose}
-          className="flex size-6 items-center justify-center rounded text-[var(--agent-muted)] hover:bg-[var(--agent-muted-bg)] hover:text-[var(--agent-fg)]"
+          className="rounded p-1 text-(--dim) hover:bg-(--bg) hover:text-(--fg)"
           title="Close terminal"
           aria-label="Close terminal"
         >
-          <X className="size-3.5" />
+          <X className="h-3.5 w-3.5" />
         </button>
       </div>
       <pre
         ref={outputRef}
-        className="m-0 min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words bg-[var(--agent-bg)] px-3 py-2 font-mono text-[11px] leading-[1.35] text-[var(--agent-fg)]"
+        className="m-0 min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words bg-(--bg) px-3 py-2 font-mono text-[11px] leading-[1.35] text-(--fg)"
       >
         {lines.map((line) => (
           <span
             key={line.id}
             className={
               line.kind === "err"
-                ? "block text-red-500"
+                ? "block text-(--err)"
                 : line.kind === "error"
-                  ? "block text-red-600"
+                  ? "block text-(--err)"
                   : line.kind === "input"
-                    ? "block text-[var(--agent-muted)]"
+                    ? "block text-(--dim)"
                     : line.kind === "info"
-                      ? "block italic text-[var(--agent-muted)]"
+                      ? "block italic text-(--dim)"
                       : "block"
             }
           >
@@ -1429,8 +1399,8 @@ function TerminalDrawer({ cwd, onClose }: { cwd: string; onClose: () => void }) 
           </span>
         ))}
       </pre>
-      <div className="flex shrink-0 items-center gap-2 border-t border-[var(--agent-border)] bg-[var(--agent-bg)] px-3 py-1.5">
-        <span className="font-mono text-[11px] text-[var(--agent-muted)]">$</span>
+      <div className="flex shrink-0 items-center gap-2 border-t border-(--border) px-3 py-1.5">
+        <span className="font-mono text-[11px] text-(--dim)">$</span>
         <input
           ref={inputRef}
           value={command}
@@ -1443,7 +1413,7 @@ function TerminalDrawer({ cwd, onClose }: { cwd: string; onClose: () => void }) 
           autoCapitalize="off"
           autoCorrect="off"
           placeholder="Run a command…"
-          className="min-w-0 flex-1 bg-transparent font-mono text-[11px] text-[var(--agent-fg)] outline-none placeholder:text-[var(--agent-muted)]"
+          className="min-w-0 flex-1 bg-transparent font-mono text-[11px] text-(--fg) outline-none placeholder:text-(--dim)"
           aria-label="Terminal input"
         />
       </div>
