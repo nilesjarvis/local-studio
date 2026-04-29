@@ -72,7 +72,7 @@ type DesktopBridge = {
 };
 
 const SESSION_ID = "vllm-studio-agent";
-const DEFAULT_AGENT_CWD = "/Users/sero/projects/vllm-studio";
+const DEFAULT_AGENT_CWD = "";
 const SELECTED_PROJECT_KEY = "vllm-studio.agent.selectedProjectId";
 
 function getDesktopBridge(): DesktopBridge | null {
