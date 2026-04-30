@@ -2,7 +2,15 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Virtuoso } from "react-virtuoso";
-import { ChevronRight, File, Folder, MessageSquare, Trash2 } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  File,
+  Folder,
+  MessageSquare,
+  PanelLeftOpen,
+  Trash2,
+} from "lucide-react";
 
 type FsEntry = {
   name: string;
@@ -35,6 +43,7 @@ export function FilesystemPanel({ cwd }: Props) {
   const [fileSize, setFileSize] = useState(0);
   const [loadingFile, setLoadingFile] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
+  const [fileListOpen, setFileListOpen] = useState(true);
 
   // Load directory whenever the cwd or relPath changes.
   useEffect(() => {
@@ -184,32 +193,59 @@ export function FilesystemPanel({ cwd }: Props) {
 
   return (
     <div className="flex h-full min-h-0">
-      <div className="flex w-[180px] shrink-0 flex-col border-r border-(--border)">
-        <Breadcrumb relPath={relPath} onUp={goUp} onRoot={() => setRelPath("")} />
-        <div className="min-h-0 flex-1 overflow-y-auto py-1">
-          {entries.map((entry) => (
+      {fileListOpen ? (
+        <div className="flex w-[180px] shrink-0 flex-col border-r border-(--border)">
+          <div className="flex h-7 shrink-0 items-center border-b border-(--border)">
+            <div className="min-w-0 flex-1">
+              <Breadcrumb relPath={relPath} onUp={goUp} onRoot={() => setRelPath("")} />
+            </div>
             <button
-              key={entry.path}
               type="button"
-              onClick={() => openEntry(entry)}
-              title={entry.rel}
-              className={`flex w-full items-center gap-1.5 px-2 py-1 text-left text-[11px] hover:bg-(--surface) ${
-                openFile === entry.rel ? "bg-(--surface) text-(--fg)" : "text-(--dim)"
-              }`}
+              onClick={() => setFileListOpen(false)}
+              className="mr-1 rounded p-1 text-(--dim) hover:bg-(--surface) hover:text-(--fg)"
+              title="Collapse file list"
+              aria-label="Collapse file list"
             >
-              {entry.kind === "directory" ? (
-                <Folder className="h-3 w-3 shrink-0" />
-              ) : (
-                <File className="h-3 w-3 shrink-0" />
-              )}
-              <span className="truncate">{entry.name}</span>
+              <ChevronLeft className="h-3.5 w-3.5" />
             </button>
-          ))}
-          {entries.length === 0 ? (
-            <div className="px-2 py-2 text-[11px] text-(--dim)">Empty.</div>
-          ) : null}
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto py-1">
+            {entries.map((entry) => (
+              <button
+                key={entry.path}
+                type="button"
+                onClick={() => openEntry(entry)}
+                title={entry.rel}
+                className={`flex w-full items-center gap-1.5 px-2 py-1 text-left text-[11px] hover:bg-(--surface) ${
+                  openFile === entry.rel ? "bg-(--surface) text-(--fg)" : "text-(--dim)"
+                }`}
+              >
+                {entry.kind === "directory" ? (
+                  <Folder className="h-3 w-3 shrink-0" />
+                ) : (
+                  <File className="h-3 w-3 shrink-0" />
+                )}
+                <span className="truncate">{entry.name}</span>
+              </button>
+            ))}
+            {entries.length === 0 ? (
+              <div className="px-2 py-2 text-[11px] text-(--dim)">Empty.</div>
+            ) : null}
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="flex w-8 shrink-0 justify-center border-r border-(--border) pt-1">
+          <button
+            type="button"
+            onClick={() => setFileListOpen(true)}
+            className="h-6 rounded p-1 text-(--dim) hover:bg-(--surface) hover:text-(--fg)"
+            title="Show file list"
+            aria-label="Show file list"
+          >
+            <PanelLeftOpen className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
 
       <div className="flex min-w-0 flex-1 flex-col">
         {!openFile ? (
@@ -227,11 +263,11 @@ export function FilesystemPanel({ cwd }: Props) {
           </div>
         ) : (
           <FileViewer
+            key={openFile}
             lines={lines}
             commentsByLine={commentsByLine}
             onAddComment={addComment}
             onRemoveComment={removeComment}
-            filePath={openFile}
           />
         )}
       </div>
@@ -249,7 +285,7 @@ function Breadcrumb({
   onRoot: () => void;
 }) {
   return (
-    <div className="flex h-7 shrink-0 items-center gap-1 border-b border-(--border) px-2 text-[11px] text-(--dim)">
+    <div className="flex h-7 shrink-0 items-center gap-1 px-2 text-[11px] text-(--dim)">
       <button
         type="button"
         onClick={onRoot}
@@ -282,21 +318,14 @@ function FileViewer({
   commentsByLine,
   onAddComment,
   onRemoveComment,
-  filePath,
 }: {
   lines: string[];
   commentsByLine: Map<number, Comment[]>;
   onAddComment: (line: number, body: string) => Promise<void>;
   onRemoveComment: (id: string) => Promise<void>;
-  filePath: string;
 }) {
   const [composerLine, setComposerLine] = useState<number | null>(null);
   const [composerValue, setComposerValue] = useState("");
-
-  useEffect(() => {
-    setComposerLine(null);
-    setComposerValue("");
-  }, [filePath]);
 
   const submit = useCallback(
     async (event: FormEvent) => {
@@ -343,10 +372,7 @@ function FileViewer({
           {lineComments.length > 0 ? (
             <div className="ml-12 mr-2 mb-1 flex flex-col gap-1 border-l-2 border-(--border) pl-2">
               {lineComments.map((c) => (
-                <div
-                  key={c.id}
-                  className="flex items-start gap-1 text-[11px] text-(--fg)"
-                >
+                <div key={c.id} className="flex items-start gap-1 text-[11px] text-(--fg)">
                   <span className="flex-1 whitespace-pre-wrap">{c.body}</span>
                   <button
                     type="button"

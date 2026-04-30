@@ -11,14 +11,13 @@ import {
   ArrowLeft,
   ArrowRight,
   ChevronDown,
-  ChevronRight,
   Cpu,
   GitBranch,
   Plus,
   RotateCcw,
   X,
 } from "lucide-react";
-import { ChatPane, makeFreshTab, type SessionTab } from "./chat-pane";
+import { ChatPane, makeFreshTab, SessionTabsBar, type SessionTab } from "./chat-pane";
 import { FilesystemPanel } from "./filesystem-panel";
 import { PaneGrid } from "./pane-grid";
 import {
@@ -73,6 +72,8 @@ const COMPUTER_FILES_OPEN_KEY = "vllm-studio.agent.computer.filesOpen";
 const COMPUTER_DEFAULT_CLOSED_MIGRATION_KEY = "vllm-studio.agent.computer.defaultClosedMigrated";
 const PANE_LAYOUT_KEY = "vllm-studio.agent.paneLayout";
 
+type ComputerTab = "browser" | "files";
+
 function newPaneId(): PaneId {
   return `p-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 }
@@ -100,8 +101,7 @@ export function AgentWorkspace() {
   const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [browserToolEnabled, setBrowserToolEnabled] = useState(false);
-  const [browserOpen, setBrowserOpen] = useState(false);
-  const [filesOpen, setFilesOpen] = useState(false);
+  const [activeComputerTab, setActiveComputerTab] = useState<ComputerTab>("browser");
 
   // Pane state: a tree-shaped Layout where each leaf is identified by a
   // PaneId and points into panesById, which holds tabs + the per-pane
@@ -331,10 +331,8 @@ export function AgentWorkspace() {
       window.localStorage.setItem(COMPUTER_FILES_OPEN_KEY, "0");
       window.localStorage.setItem(COMPUTER_DEFAULT_CLOSED_MIGRATION_KEY, "1");
     }
-    const browserOpenStored = window.localStorage.getItem(COMPUTER_BROWSER_OPEN_KEY);
-    if (browserOpenStored === "1") setBrowserOpen(true);
     const filesOpenStored = window.localStorage.getItem(COMPUTER_FILES_OPEN_KEY);
-    if (filesOpenStored === "1") setFilesOpen(true);
+    setActiveComputerTab(filesOpenStored === "1" ? "files" : "browser");
     // Restore the pane layout shape only (split ratios + leaf placement). Each
     // referenced pane gets a fresh PaneState — we don't persist tab content
     // because pi sessions live in their own files and are picked from the
@@ -373,24 +371,12 @@ export function AgentWorkspace() {
     }
   }, [layout]);
 
-  const toggleBrowserOpen = useCallback(() => {
-    setBrowserOpen((current) => {
-      const next = !current;
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(COMPUTER_BROWSER_OPEN_KEY, next ? "1" : "0");
-      }
-      return next;
-    });
-  }, []);
-
-  const toggleFilesOpen = useCallback(() => {
-    setFilesOpen((current) => {
-      const next = !current;
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(COMPUTER_FILES_OPEN_KEY, next ? "1" : "0");
-      }
-      return next;
-    });
+  const selectComputerTab = useCallback((tab: ComputerTab) => {
+    setActiveComputerTab(tab);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(COMPUTER_BROWSER_OPEN_KEY, tab === "browser" ? "1" : "0");
+      window.localStorage.setItem(COMPUTER_FILES_OPEN_KEY, tab === "files" ? "1" : "0");
+    }
   }, []);
 
   const toggleBrowserTool = useCallback(() => {
@@ -575,13 +561,14 @@ export function AgentWorkspace() {
     () => projects.find((entry) => entry.id === selectedProjectId) || null,
     [projects, selectedProjectId],
   );
+  const focusedPane = panesById.get(focusedPaneId) ?? panesById.values().next().value ?? null;
   const shouldShowProjectEmptyState =
     projectsLoaded && !searchParams.get("project") && !selectedProjectId && projects.length === 0;
 
   return (
     <div className="flex h-[calc(100dvh-2.5rem)] min-h-0 w-full flex-col bg-(--bg) text-(--fg) md:h-[100dvh]">
-      <header className="flex h-11 shrink-0 items-center gap-3 border-b border-(--border) px-4">
-        <div className="flex items-center gap-1.5 text-sm">
+      <header className="flex h-11 shrink-0 items-center gap-3 border-b border-(--border) px-3">
+        <div className="flex shrink-0 items-center gap-1.5 text-sm">
           <span className="font-semibold tracking-tight text-[13px]">Agent</span>
           {activeProject ? (
             <span className="hidden items-center gap-1 truncate text-xs text-(--dim) sm:inline-flex">
@@ -597,7 +584,48 @@ export function AgentWorkspace() {
           ) : null}
         </div>
 
-        <div className="flex-1" />
+        {focusedPane ? (
+          <SessionTabsBar
+            tabs={focusedPane.tabs}
+            activeTabId={focusedPane.activeTabId}
+            onTabsChange={(nextTabsOrUpdater) => {
+              setPanesById((current) => {
+                const cur = current.get(focusedPaneId);
+                if (!cur) return current;
+                const nextTabs =
+                  typeof nextTabsOrUpdater === "function"
+                    ? nextTabsOrUpdater(cur.tabs)
+                    : nextTabsOrUpdater;
+                const next = new Map(current);
+                next.set(focusedPaneId, { ...cur, tabs: nextTabs });
+                return next;
+              });
+            }}
+            onActiveTabChange={(tabId) => {
+              setPanesById((current) => {
+                const cur = current.get(focusedPaneId);
+                if (!cur) return current;
+                const next = new Map(current);
+                next.set(focusedPaneId, { ...cur, activeTabId: tabId });
+                return next;
+              });
+            }}
+            onRenameTab={(tabId, title) => {
+              setPanesById((current) => {
+                const cur = current.get(focusedPaneId);
+                if (!cur) return current;
+                const next = new Map(current);
+                next.set(focusedPaneId, {
+                  ...cur,
+                  tabs: cur.tabs.map((tab) => (tab.id === tabId ? { ...tab, title } : tab)),
+                });
+                return next;
+              });
+            }}
+          />
+        ) : (
+          <div className="flex-1" />
+        )}
 
         <ModelPicker
           models={models}
@@ -694,15 +722,6 @@ export function AgentWorkspace() {
                           return next;
                         });
                       }}
-                      onActiveTabChange={(tabId) => {
-                        setPanesById((current) => {
-                          const cur = current.get(paneId);
-                          if (!cur) return current;
-                          const next = new Map(current);
-                          next.set(paneId, { ...cur, activeTabId: tabId });
-                          return next;
-                        });
-                      }}
                       onClose={
                         onlyOne
                           ? undefined
@@ -770,12 +789,33 @@ export function AgentWorkspace() {
 
         {rightPanelOpen ? (
           <aside className="hidden w-[440px] shrink-0 flex-col border-l border-(--border) bg-(--bg) xl:flex">
-            <div className="flex h-9 shrink-0 items-center justify-between border-b border-(--border) px-3 text-xs text-(--dim)">
-              <span className="font-medium uppercase tracking-wide">Computer</span>
+            <div className="flex h-9 shrink-0 items-center gap-1 border-b border-(--border) px-2 text-xs text-(--dim)">
+              <button
+                type="button"
+                onClick={() => selectComputerTab("browser")}
+                className={`h-6 flex-1 rounded px-2 font-medium uppercase tracking-wide ${
+                  activeComputerTab === "browser"
+                    ? "bg-(--surface) text-(--fg)"
+                    : "hover:bg-(--surface) hover:text-(--fg)"
+                }`}
+              >
+                Browser
+              </button>
+              <button
+                type="button"
+                onClick={() => selectComputerTab("files")}
+                className={`h-6 flex-1 rounded px-2 font-medium uppercase tracking-wide ${
+                  activeComputerTab === "files"
+                    ? "bg-(--surface) text-(--fg)"
+                    : "hover:bg-(--surface) hover:text-(--fg)"
+                }`}
+              >
+                Files
+              </button>
               <button
                 type="button"
                 onClick={() => setRightPanelOpen(false)}
-                className="rounded p-1 hover:bg-(--surface) hover:text-(--fg)"
+                className="ml-1 rounded p-1 hover:bg-(--surface) hover:text-(--fg)"
                 title="Close"
                 aria-label="Close computer"
               >
@@ -783,21 +823,8 @@ export function AgentWorkspace() {
               </button>
             </div>
 
-            <section className={`flex min-h-0 flex-col ${browserOpen ? "flex-1" : "shrink-0"}`}>
-              <button
-                type="button"
-                onClick={toggleBrowserOpen}
-                aria-expanded={browserOpen}
-                className="flex h-9 shrink-0 items-center gap-2 border-b border-(--border) px-3 text-xs text-(--dim) hover:text-(--fg)"
-              >
-                {browserOpen ? (
-                  <ChevronDown className="h-3.5 w-3.5" />
-                ) : (
-                  <ChevronRight className="h-3.5 w-3.5" />
-                )}
-                <span className="font-medium uppercase tracking-wide">Browser</span>
-              </button>
-              {browserOpen ? (
+            {activeComputerTab === "browser" ? (
+              <section className="flex min-h-0 flex-1 flex-col">
                 <div className="flex min-h-0 flex-1 flex-col">
                   <form
                     onSubmit={submitBrowserUrl}
@@ -861,29 +888,14 @@ export function AgentWorkspace() {
                     )}
                   </div>
                 </div>
-              ) : null}
-            </section>
-
-            <section className={`flex min-h-0 flex-col ${filesOpen ? "flex-1" : "shrink-0"}`}>
-              <button
-                type="button"
-                onClick={toggleFilesOpen}
-                aria-expanded={filesOpen}
-                className="flex h-9 shrink-0 items-center gap-2 border-b border-(--border) px-3 text-xs text-(--dim) hover:text-(--fg)"
-              >
-                {filesOpen ? (
-                  <ChevronDown className="h-3.5 w-3.5" />
-                ) : (
-                  <ChevronRight className="h-3.5 w-3.5" />
-                )}
-                <span className="font-medium uppercase tracking-wide">Files</span>
-              </button>
-              {filesOpen ? (
+              </section>
+            ) : (
+              <section className="flex min-h-0 flex-1 flex-col">
                 <div className="min-h-0 flex-1">
                   <FilesystemPanel cwd={activeProject?.path ?? null} />
                 </div>
-              ) : null}
-            </section>
+              </section>
+            )}
           </aside>
         ) : null}
       </div>

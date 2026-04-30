@@ -59,7 +59,6 @@ type Props = {
   tabs: SessionTab[];
   activeTabId: string;
   onTabsChange: (tabs: SessionTab[] | ((tabs: SessionTab[]) => SessionTab[])) => void;
-  onActiveTabChange: (tabId: string) => void;
   onClose?: () => void;
   // External request to load and replay a session (e.g. user clicked a row in
   // the sidebar). Returns the events as a side effect via tab updates.
@@ -139,8 +138,6 @@ export function ChatPane({
   tabs,
   activeTabId,
   onTabsChange,
-  onActiveTabChange,
-  onClose,
   registerExternalLoader,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -560,62 +557,12 @@ export function ChatPane({
     registerExternalLoader?.(loadAndReplay);
   }, [registerExternalLoader, loadAndReplay]);
 
-  const newTab = useCallback(() => {
-    const tab = makeFreshTab();
-    onTabsChange([...tabs, tab]);
-    onActiveTabChange(tab.id);
-  }, [tabs, onTabsChange, onActiveTabChange]);
-
-  const closeTab = useCallback(
-    (tabId: string) => {
-      const remaining = tabs.filter((tab) => tab.id !== tabId);
-      if (remaining.length === 0) {
-        // Closing the last tab closes the whole pane (parent handles layout
-        // collapse). Replace with a fresh empty tab so the pane is never
-        // tabless mid-render.
-        const fresh = makeFreshTab();
-        onTabsChange([fresh]);
-        onActiveTabChange(fresh.id);
-        onClose?.();
-        return;
-      }
-      onTabsChange(remaining);
-      if (activeTabId === tabId) {
-        onActiveTabChange(remaining[remaining.length - 1].id);
-      }
-    },
-    [tabs, activeTabId, onTabsChange, onActiveTabChange, onClose],
-  );
-
   return (
     <section
       onMouseDownCapture={onFocus}
       data-pane-id={paneId}
       className={`flex min-w-0 min-h-0 flex-1 flex-col bg-(--bg) ${isFocused ? "" : "opacity-95"}`}
     >
-      <div className="flex h-9 shrink-0 items-center gap-1 border-b border-(--border) bg-(--surface) px-1">
-        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-          {tabs.map((tab) => (
-            <TabPill
-              key={tab.id}
-              tab={tab}
-              active={tab.id === activeTabId}
-              onSelect={() => onActiveTabChange(tab.id)}
-              onClose={() => closeTab(tab.id)}
-            />
-          ))}
-          <button
-            type="button"
-            onClick={newTab}
-            className="ml-1 flex h-6 w-6 items-center justify-center rounded text-(--dim) hover:bg-(--bg) hover:text-(--fg)"
-            title="New tab in this pane"
-            aria-label="New tab in this pane"
-          >
-            <Plus className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      </div>
-
       {activeTab?.error ? (
         <div className="border-b border-(--border) bg-(--err)/10 px-4 py-2 text-xs text-(--err)">
           {activeTab.error}
@@ -651,15 +598,8 @@ export function ChatPane({
         </div>
       </div>
 
-      <form
-        onSubmit={sendMessage}
-        className="shrink-0 border-t border-(--border) bg-(--bg) px-6 py-4"
-      >
-        <div
-          className={`mx-auto max-w-3xl rounded-xl border bg-(--surface) ${
-            isMultiline ? "border-(--accent)/40 ring-1 ring-(--accent)/15" : "border-(--border)"
-          }`}
-        >
+      <form onSubmit={sendMessage} className="shrink-0 bg-(--bg) px-6 pb-4 pt-2">
+        <div className="mx-auto max-w-3xl rounded-xl bg-(--surface)">
           <textarea
             ref={textareaRef}
             value={activeTab?.input ?? ""}
@@ -692,7 +632,7 @@ export function ChatPane({
             }
             className="min-h-[40px] max-h-[240px] w-full resize-none overflow-y-auto bg-transparent px-3 py-2 text-sm leading-6 text-(--fg) outline-none placeholder:text-(--dim)"
           />
-          <div className="flex items-center gap-2 border-t border-(--border) px-2 py-1.5">
+          <div className="flex items-center gap-2 px-2 pb-1.5">
             <button
               type="button"
               onClick={onToggleBrowserTool}
@@ -723,9 +663,11 @@ export function ChatPane({
               <button
                 type="submit"
                 disabled={!activeTab?.input.trim() || !modelId}
-                className="inline-flex h-7 items-center gap-1.5 rounded bg-(--fg) px-2.5 text-xs font-medium text-(--bg) disabled:opacity-30"
+                className="inline-flex h-7 w-7 items-center justify-center rounded text-(--fg) hover:bg-(--bg) disabled:opacity-30"
+                aria-label="Send"
+                title="Send"
               >
-                <Send className="h-3 w-3" /> Send
+                <Send className="h-3.5 w-3.5" />
               </button>
             )}
           </div>
@@ -735,22 +677,97 @@ export function ChatPane({
   );
 }
 
+export function SessionTabsBar({
+  tabs,
+  activeTabId,
+  onActiveTabChange,
+  onTabsChange,
+  onRenameTab,
+}: {
+  tabs: SessionTab[];
+  activeTabId: string;
+  onActiveTabChange: (tabId: string) => void;
+  onTabsChange: (tabs: SessionTab[] | ((tabs: SessionTab[]) => SessionTab[])) => void;
+  onRenameTab: (tabId: string, title: string) => void;
+}) {
+  const newTab = useCallback(() => {
+    const tab = makeFreshTab();
+    onTabsChange((current) => [...current, tab]);
+    onActiveTabChange(tab.id);
+  }, [onTabsChange, onActiveTabChange]);
+
+  const closeTab = useCallback(
+    (tabId: string) => {
+      const remaining = tabs.filter((tab) => tab.id !== tabId);
+      if (remaining.length === 0) {
+        const fresh = makeFreshTab();
+        onTabsChange([fresh]);
+        onActiveTabChange(fresh.id);
+        return;
+      }
+      onTabsChange(remaining);
+      if (activeTabId === tabId) onActiveTabChange(remaining[remaining.length - 1].id);
+    },
+    [tabs, activeTabId, onTabsChange, onActiveTabChange],
+  );
+
+  return (
+    <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+      {tabs.map((tab) => (
+        <TabPill
+          key={tab.id}
+          tab={tab}
+          active={tab.id === activeTabId}
+          onSelect={() => onActiveTabChange(tab.id)}
+          onClose={() => closeTab(tab.id)}
+          onRename={(title) => onRenameTab(tab.id, title)}
+        />
+      ))}
+      <button
+        type="button"
+        onClick={newTab}
+        className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-(--dim) hover:bg-(--surface) hover:text-(--fg)"
+        title="New tab in this pane"
+        aria-label="New tab in this pane"
+      >
+        <Plus className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
 function TabPill({
   tab,
   active,
   onSelect,
   onClose,
+  onRename,
 }: {
   tab: SessionTab;
   active: boolean;
   onSelect: () => void;
   onClose: () => void;
+  onRename: (title: string) => void;
 }) {
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState(tab.title);
+
+  const finishRename = useCallback(() => {
+    const next = draft.trim();
+    if (next) onRename(next.slice(0, 80));
+    setRenaming(false);
+  }, [draft, onRename]);
+
   return (
     <div
       role="tab"
       aria-selected={active}
       onClick={onSelect}
+      onDoubleClick={(event) => {
+        event.stopPropagation();
+        setDraft(tab.title);
+        setRenaming(true);
+      }}
       title={tab.title}
       className={`group flex h-7 max-w-[200px] shrink-0 cursor-pointer items-center gap-1 rounded-md border px-2 text-xs ${
         active
@@ -758,7 +775,25 @@ function TabPill({
           : "border-transparent text-(--dim) hover:bg-(--bg) hover:text-(--fg)"
       }`}
     >
-      <span className="truncate">{tab.title}</span>
+      {renaming ? (
+        <input
+          value={draft}
+          autoFocus
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={finishRename}
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") finishRename();
+            if (event.key === "Escape") {
+              setDraft(tab.title);
+              setRenaming(false);
+            }
+          }}
+          className="min-w-0 bg-transparent outline-none"
+        />
+      ) : (
+        <span className="truncate">{tab.title}</span>
+      )}
       <button
         type="button"
         onClick={(event) => {
