@@ -632,7 +632,7 @@ export function AgentWorkspace() {
     <div className="flex h-[calc(100dvh-2.5rem)] min-h-0 w-full flex-col bg-(--bg) text-(--fg) md:h-[100dvh]">
       <header className="flex h-11 shrink-0 items-center gap-3 border-b border-(--border) px-4">
         <div className="flex items-center gap-1.5 text-sm">
-          <span className="font-semibold tracking-tight">Agent</span>
+          <span className="font-semibold tracking-tight text-[13px]">Agent</span>
           {activeProject ? (
             <span className="hidden items-center gap-1 truncate text-xs text-(--dim) sm:inline-flex">
               <span className="opacity-60">/</span>
@@ -744,6 +744,7 @@ export function AgentWorkspace() {
                     modelName={activeModel?.name ?? null}
                     modelsLoading={loadingModels}
                     cwd={agentCwd}
+                    projectName={activeProject?.name ?? null}
                     browserToolEnabled={browserToolEnabled}
                     onToggleBrowserTool={toggleBrowserTool}
                     isFocused={focusedPaneId === paneId}

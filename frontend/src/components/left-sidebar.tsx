@@ -11,7 +11,6 @@ import {
   Sun,
   Moon,
   Square,
-  Bot,
   PanelLeftClose,
   PanelLeftOpen,
 } from "lucide-react";
@@ -19,10 +18,10 @@ import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "@/store";
 import { useSidebarStatus } from "@/hooks/use-sidebar-status";
 import { useStopModel } from "@/hooks/use-stop-model";
+import { ProjectsNavSection } from "@/components/projects-nav-section";
 
 const tabs = [
   { href: "/", label: "Status", icon: BarChart3 },
-  { href: "/agent", label: "Agent", icon: Bot },
   { href: "/usage", label: "Usage", icon: Database },
   { href: "/recipes", label: "Models", icon: HardDrive },
   { href: "/logs", label: "Server", icon: Server },
@@ -117,6 +116,7 @@ export function LeftSidebar({ children }: { children: React.ReactNode }) {
               expanded={isExpanded}
             />
           ))}
+          <ProjectsNavSection expanded={isExpanded} />
         </nav>
 
         {/* Footer: stop, theme, status */}
