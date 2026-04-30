@@ -101,7 +101,10 @@ describe("audio routes", () => {
         evict: async () => ({ success: true, evicted_pid: await evictModel() }),
       },
       engineService: {
-        evict: async () => ({ success: true, evicted_pid: await evictModel() }),
+        setActiveRecipe: async () => {
+          await evictModel();
+          return { ok: true };
+        },
       },
     } as unknown as AppContext;
 

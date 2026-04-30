@@ -47,6 +47,8 @@ const resolveHfToken = (
  * @param context - Application dependency container.
  */
 export const registerEngineRoutes = (app: Hono, context: AppContext): void => {
+  const launchAbortControllers = new Map<string, AbortController>();
+
   // ── Recipe CRUD (from lifecycle-routes) ──
 
   app.get("/recipes", async (ctx) => {
@@ -111,19 +113,30 @@ export const registerEngineRoutes = (app: Hono, context: AppContext): void => {
     const recipeId = ctx.req.param("recipeId");
     const recipe = context.stores.recipeStore.get(recipeId);
     if (!recipe) throw notFound("Recipe not found");
-    const result = await context.engineService.setActiveRecipe(recipe);
-    if (!result.ok) {
-      if (result.error.toLowerCase().includes("cancelled")) throw badRequest(result.error);
-      throw serviceUnavailable(result.error);
+    const controller = new AbortController();
+    launchAbortControllers.set(recipeId, controller);
+    try {
+      const result = await context.engineService.setActiveRecipe(recipe, { signal: controller.signal });
+      if (!result.ok) {
+        if (result.error.toLowerCase().includes("cancelled")) throw badRequest(result.error);
+        throw serviceUnavailable(result.error);
+      }
+      return ctx.json({ success: true, message: "Launch started" });
+    } finally {
+      if (launchAbortControllers.get(recipeId) === controller) {
+        launchAbortControllers.delete(recipeId);
+      }
     }
-    return ctx.json({ success: true, message: "Launch started" });
   });
 
   app.post("/launch/:recipeId/cancel", async (ctx) => {
     const recipeId = ctx.req.param("recipeId");
-    const result = await context.engineService.cancelLaunch(recipeId);
-    if (!result.success) throw notFound(result.message);
-    return ctx.json(result);
+    const controller = launchAbortControllers.get(recipeId);
+    if (!controller) throw notFound(`No launch in progress for ${recipeId}`);
+    controller.abort();
+    const result = await context.engineService.setActiveRecipe(null, { signal: controller.signal });
+    if (!result.ok) throw serviceUnavailable(result.error);
+    return ctx.json({ success: true, message: `Launch of ${recipeId} cancelled` });
   });
 
   app.post("/evict", async (ctx) => {

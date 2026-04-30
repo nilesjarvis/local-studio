@@ -83,6 +83,7 @@ const createEngineRoutesHarness = (): {
     },
     evictModel: async () => {
       const pid = current?.pid ?? null;
+      if (pid !== null) killed.push(pid);
       current = null;
       return pid;
     },

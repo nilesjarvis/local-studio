@@ -166,21 +166,5 @@ describe("EngineCoordinator.setActiveRecipe", () => {
     expect(events.map((event) => event.stage)).toEqual(["launching", "waiting", "ready"]);
   });
 
-  it("cancels an in-flight setActiveRecipe launch", async () => {
-    const { coordinator, recipes, killed, events } = createCoordinator(null, 503);
 
-    const launch = coordinator.setActiveRecipe(recipes[0]);
-    while (!events.some((event) => event.stage === "waiting")) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-
-    await expect(coordinator.cancelLaunch(recipes[0].id)).resolves.toEqual({
-      success: true,
-      message: `Launch of ${recipes[0].id} cancelled`,
-    });
-    await expect(launch).resolves.toEqual({ ok: false, error: "Launch cancelled" });
-
-    expect(killed).toEqual([process.pid]);
-    expect(events.map((event) => event.stage)).toEqual(["launching", "waiting", "cancelled"]);
-  });
 });

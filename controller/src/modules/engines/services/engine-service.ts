@@ -1,8 +1,8 @@
 // Types needed by EngineService are defined below
-import type { Recipe, LaunchResult, ProcessInfo } from "../../models/types";
+import type { Recipe, ProcessInfo } from "../../models/types";
 import type { ModelDownload } from "../../shared/recipe-types";
 
-export type { Recipe, LaunchResult, ProcessInfo };
+export type { Recipe, ProcessInfo };
 export type { ModelDownload };
 
 export type RuntimeType = "vllm" | "sglang" | "llamacpp" | "exllamav3" | "cuda" | "rocm";
@@ -20,8 +20,6 @@ export type UpgradeResult = {
   error: string | null;
   used_command: string | null;
 };
-export type EvictResult = { success: boolean; evicted_pid: number | null };
-export type CancelResult = { success: boolean; message: string };
 
 export interface DownloadRequest {
   model_id: string;
@@ -76,11 +74,8 @@ export interface SetActiveRecipeOptions {
  */
 export interface EngineService {
   // Lifecycle
-  launch(recipe: Recipe): Promise<LaunchResult>;
-  setActiveRecipe?(recipe: Recipe | null, options?: SetActiveRecipeOptions): Promise<SetActiveRecipeResult>;
+  setActiveRecipe(recipe: Recipe | null, options?: SetActiveRecipeOptions): Promise<SetActiveRecipeResult>;
   ensureActive(recipe: Recipe, options?: EnsureActiveOptions): Promise<EnsureActiveResult>;
-  evict(force?: boolean): Promise<EvictResult>;
-  cancelLaunch(recipeId: string): Promise<CancelResult>;
 
   // State queries
   getCurrentRecipe(): Recipe | null;

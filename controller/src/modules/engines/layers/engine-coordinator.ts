@@ -1,25 +1,22 @@
 import { AsyncLock, delay } from "../../../core/async";
-import { primaryLogPathFor, readFileTailBytes, sanitizeLogSessionId } from "../../../core/log-files";
+import { primaryLogPathFor, readFileTailBytes } from "../../../core/log-files";
 import { Event, type EventManager } from "../../system/event-manager";
 import { CONTROLLER_EVENTS } from "../../../contracts/controller-events";
 import { pidExists } from "./process-utilities";
 import { isRecipeRunning } from "../../models/recipes/recipe-matching";
-import type { LaunchResult, ProcessInfo, Recipe } from "../../models/types";
+import type { ProcessInfo, Recipe } from "../../models/types";
 import type { Config } from "../../../config/env";
 import type { Logger } from "../../../core/logger";
 import type { ProcessManager } from "./process-manager";
 import type { RecipeStore } from "../../models/recipes/recipe-store";
 import { LIFECYCLE_READY_TIMEOUT_MS } from "../configs";
-import { createEngineLifecycleMachine, type EngineLifecycleMachine, type EngineLifecycleState, type EngineLifecycleEvent } from "./engine-lifecycle-machine";
-import type { EngineService, RuntimeType, UpgradeResult, RuntimeInfo, DownloadRequest, DownloadHandle, DownloadStatus, HfModel, EvictResult, CancelResult, SetActiveRecipeResult, SetActiveRecipeOptions } from "../services/engine-service";
+import type { EngineService, RuntimeType, UpgradeResult, RuntimeInfo, DownloadRequest, HfModel, SetActiveRecipeResult, SetActiveRecipeOptions } from "../services/engine-service";
 import type { ModelDownload } from "../../shared/recipe-types";
 
-import { DownloadManager } from "./download-manager";
-import { createDownloadMachine, type DownloadMachine } from "./download-machine";
+import type { DownloadManager } from "./download-manager";
 import { getVllmRuntimeInfo, upgradeVllmRuntime, getVllmConfigHelp } from "./vllm-runtime";
 import { getLlamacppConfigHelp } from "./llamacpp-runtime";
-import { getLlamacppRuntimeInfo, getSglangRuntimeInfo, getExllamav3RuntimeInfo, getCudaInfo } from "./runtime-info";
-import { getRocmInfo, resolveRocmSmiTool } from "../../system/platform/rocm-info";
+import { getLlamacppRuntimeInfo, getSglangRuntimeInfo, getExllamav3RuntimeInfo } from "./runtime-info";
 import { upgradeSglangRuntime, upgradeLlamacppRuntime, runPlatformUpgrade } from "./runtime-upgrade";
 import { fetchHuggingFaceModelInfo } from "./huggingface-api";
 
@@ -34,73 +31,15 @@ interface CoordinatorDeps {
 }
 
 export class EngineCoordinator implements EngineService {
-  private readonly lifecycleMachine: EngineLifecycleMachine;
   private readonly switchLock = new AsyncLock();
-  private readonly launchCancelControllers = new Map<string, AbortController>();
-  private readonly setActiveRecipeCancelControllers = new Map<string, AbortController>();
   private currentRecipe: Recipe | null = null;
 
-  constructor(private readonly deps: CoordinatorDeps) {
-    this.lifecycleMachine = createEngineLifecycleMachine();
-  }
+  constructor(private readonly deps: CoordinatorDeps) {}
 
   // ── Lifecycle ──
 
-  async launch(recipe: Recipe): Promise<LaunchResult> {
-    const current = await this.deps.processManager.findInferenceProcess(
-      this.deps.config.inference_port
-    );
-    const logFilePath = primaryLogPathFor(this.deps.config.data_dir, recipe.id);
-
-    if (current && isRecipeRunning(recipe, current)) {
-      this.currentRecipe = recipe;
-      return {
-        success: true,
-        pid: current.pid,
-        message: "Model is already running",
-        log_file: logFilePath,
-      };
-    }
-
-    // Check if a different recipe is being launched, preempt it
-    const currentState = this.lifecycleMachine.state;
-    if (currentState.recipeId && currentState.recipeId !== recipe.id) {
-      await this.evictCurrent();
-      await delay(1000);
-    }
-
-    // Dispatch LAUNCH event to state machine
-    const result = this.lifecycleMachine.dispatch(
-      { type: "LAUNCH", recipe },
-      undefined
-    );
-
-    // Execute EVICT_CURRENT effect if present
-    for (const effect of result.effects) {
-      if (effect.type === "EVICT_CURRENT") {
-        await this.evictCurrent();
-      }
-    }
-
-    const cancelController = new AbortController();
-    this.launchCancelControllers.set(recipe.id, cancelController);
-    this.currentRecipe = recipe;
-
-    // Fire-and-forget the launch process
-    this.runLaunchInBackground(recipe, logFilePath, cancelController).catch((error) => {
-      this.deps.logger.error(`Unhandled launch error for ${recipe.id}: ${error}`);
-    });
-
-    return {
-      success: true,
-      pid: null,
-      message: "Launch started",
-      log_file: logFilePath,
-    };
-  }
-
   /**
-   * Set the authoritative active recipe without touching the lifecycle FSM.
+   * Set the authoritative active recipe.
    * @param recipe - Recipe to activate, or null to evict the active process.
    * @param options - Optional cancellation controls.
    * @returns Operation result.
@@ -110,10 +49,6 @@ export class EngineCoordinator implements EngineService {
     options: SetActiveRecipeOptions = {}
   ): Promise<SetActiveRecipeResult> {
     const release = await this.switchLock.acquire();
-    const cancelController = recipe ? new AbortController() : null;
-    if (recipe && cancelController) {
-      this.setActiveRecipeCancelControllers.set(recipe.id, cancelController);
-    }
     let spawnedPid: number | null = null;
     let cancelled = false;
     const publishCancelled = async (targetRecipe: Recipe): Promise<SetActiveRecipeResult> => {
@@ -131,8 +66,8 @@ export class EngineCoordinator implements EngineService {
       return { ok: false, error: "Launch cancelled" };
     };
     const abortIfNeeded = async (targetRecipe: Recipe | null): Promise<SetActiveRecipeResult | null> => {
-      if (!options.signal?.aborted && !cancelController?.signal.aborted) return null;
-      if (!targetRecipe) return { ok: false, error: "Operation cancelled" };
+      if (!options.signal?.aborted) return null;
+      if (!targetRecipe) return null;
       return publishCancelled(targetRecipe);
     };
 
@@ -153,12 +88,16 @@ export class EngineCoordinator implements EngineService {
         return { ok: true };
       }
 
-      if (current && (!recipe || !isRecipeRunning(recipe, current))) {
-        const evictedRecipe = this.findRecipeForProcess(current);
-        await this.deps.processManager.killProcess(current.pid, true);
+      const killCurrent = async (process: ProcessInfo): Promise<void> => {
+        const evictedRecipe = this.findRecipeForProcess(process);
+        await this.deps.processManager.killProcess(process.pid, true);
         if (evictedRecipe) {
           this.abortRunsForRecipe(evictedRecipe);
         }
+      };
+
+      if (current && (!recipe || !isRecipeRunning(recipe, current))) {
+        await killCurrent(current);
         await delay(500);
       }
 
@@ -200,12 +139,10 @@ export class EngineCoordinator implements EngineService {
       };
       if (options.signal) {
         waitOptions.cancel = options.signal;
-      } else if (cancelController) {
-        waitOptions.cancel = cancelController.signal;
       }
       const ready = await this.waitForReady(waitOptions);
 
-      if (options.signal?.aborted || cancelController?.signal.aborted) {
+      if (options.signal?.aborted) {
         return publishCancelled(recipe);
       }
 
@@ -226,123 +163,7 @@ export class EngineCoordinator implements EngineService {
       await this.deps.eventManager.publishLaunchProgress(recipe.id, "error", ready.message, 0);
       return { ok: false, error: ready.message };
     } finally {
-      if (recipe && cancelController) {
-        const current = this.setActiveRecipeCancelControllers.get(recipe.id);
-        if (current === cancelController) {
-          this.setActiveRecipeCancelControllers.delete(recipe.id);
-        }
-      }
       release();
-    }
-  }
-
-  private async runLaunchInBackground(
-    recipe: Recipe,
-    logFilePath: string | null,
-    cancelController: AbortController
-  ): Promise<void> {
-    const startTs = Date.now();
-    const release = await this.switchLock.acquire();
-    try {
-      await this.deps.eventManager.publishLaunchProgress(recipe.id, "evicting", "Clearing VRAM...", 0);
-      await this.evictCurrent();
-      await delay(1000);
-
-      if (cancelController.signal.aborted) {
-        await this.deps.eventManager.publishLaunchProgress(recipe.id, "cancelled", "Preempted by another launch", 0);
-        return;
-      }
-
-      // Dispatch PROCESS_STARTED effect, then actually start the process
-      this.lifecycleMachine.dispatch({ type: "PROCESS_STARTED", pid: 0 }, undefined);
-
-      await this.deps.eventManager.publishLaunchProgress(recipe.id, "launching", `Starting ${recipe.name}...`, 0.25);
-      const launch = await this.deps.processManager.launchModel(recipe);
-      if (!launch.success) {
-        this.lifecycleMachine.dispatch({ type: "HEALTH_FAIL", reason: launch.message }, undefined);
-        await this.deps.eventManager.publishLaunchProgress(recipe.id, "error", launch.message, 0);
-        return;
-      }
-
-      // Update the state machine with the actual pid
-      if (launch.pid) {
-        this.lifecycleMachine.dispatch({ type: "PROCESS_STARTED", pid: launch.pid }, undefined);
-      }
-
-      await this.deps.eventManager.publishLaunchProgress(recipe.id, "waiting", "Waiting for model to load...", 0.5);
-
-      const fatalPatterns = [
-        "raise ValueError",
-        "raise RuntimeError",
-        "CUDA out of memory",
-        "OutOfMemoryError",
-        "torch.OutOfMemoryError",
-        "not enough memory",
-        "Cannot allocate",
-        "larger than the available KV cache memory",
-        "EngineCore failed to start",
-      ];
-
-      if (!logFilePath) {
-        this.lifecycleMachine.dispatch({ type: "HEALTH_FAIL", reason: "Invalid recipe id" }, undefined);
-        await this.deps.eventManager.publishLaunchProgress(recipe.id, "error", "Invalid recipe id", 0);
-        return;
-      }
-
-      const ready = await this.waitForReady({
-        recipe,
-        pid: launch.pid,
-        logFilePath,
-        cancel: cancelController.signal,
-        timeoutMs: LIFECYCLE_READY_TIMEOUT_MS,
-        fatalPatterns,
-        onProgress: async (elapsedSeconds) => {
-          await this.deps.eventManager.publishLaunchProgress(
-            recipe.id,
-            "waiting",
-            `Loading model... (${elapsedSeconds}s)`,
-            0.5 + (elapsedSeconds / (LIFECYCLE_READY_TIMEOUT_MS / 1000)) * 0.5
-          );
-        },
-      });
-
-      if (ready.ready) {
-        this.lifecycleMachine.dispatch({ type: "HEALTH_PASS" }, undefined);
-        await this.deps.eventManager.publishLaunchProgress(
-          recipe.id,
-          "ready",
-          "Model is ready!",
-          1.0
-        );
-        return;
-      }
-
-      this.lifecycleMachine.dispatch({ type: "HEALTH_FAIL", reason: ready.message }, undefined);
-
-      if (launch.pid) {
-        await this.deps.processManager.killProcess(launch.pid, true);
-      }
-      await this.deps.eventManager.publishLaunchProgress(
-        recipe.id,
-        "error",
-        ready.message,
-        0
-      );
-      const errorTail = logFilePath ? readFileTailBytes(logFilePath, 1000) : "";
-      this.deps.logger.error(
-        `Launch failed for ${recipe.id}: ${ready.message}: ${errorTail.slice(-200)}`
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.lifecycleMachine.dispatch({ type: "HEALTH_FAIL", reason: message }, undefined);
-      await this.deps.eventManager.publishLaunchProgress(recipe.id, "error", message, 0);
-      this.deps.logger.error(`Launch background error for ${recipe.id}: ${message}`);
-    } finally {
-      release();
-      const controller = this.launchCancelControllers.get(recipe.id);
-      if (controller === cancelController) {
-        this.launchCancelControllers.delete(recipe.id);
-      }
     }
   }
 
@@ -412,32 +233,6 @@ export class EngineCoordinator implements EngineService {
     };
   }
 
-  async evict(force: boolean = false): Promise<EvictResult> {
-    const release = await this.switchLock.acquire();
-    try {
-      const evictedPid = await this.evictCurrent();
-      this.lifecycleMachine.dispatch({ type: "EVICT", force }, undefined);
-      this.currentRecipe = null;
-      return { success: true, evicted_pid: evictedPid };
-    } finally {
-      release();
-    }
-  }
-
-  private async evictCurrent(): Promise<number | null> {
-    const currentProcess = await this.deps.processManager.findInferenceProcess(
-      this.deps.config.inference_port
-    );
-    const currentRecipe = currentProcess
-      ? this.findRecipeForProcess(currentProcess)
-      : null;
-    const evictedPid = await this.deps.processManager.evictModel(true);
-    if (currentRecipe) {
-      this.abortRunsForRecipe(currentRecipe);
-    }
-    return evictedPid;
-  }
-
   private findRecipeForProcess(current: ProcessInfo): Recipe | null {
     for (const candidate of this.deps.recipeStore.list()) {
       if (isRecipeRunning(candidate, current, { allowEitherPathContains: true })) {
@@ -471,36 +266,10 @@ export class EngineCoordinator implements EngineService {
     }
   }
 
-  async cancelLaunch(recipeId: string): Promise<CancelResult> {
-    const setActiveRecipeCancel = this.setActiveRecipeCancelControllers.get(recipeId);
-    if (setActiveRecipeCancel) {
-      setActiveRecipeCancel.abort();
-      return { success: true, message: `Launch of ${recipeId} cancelled` };
-    }
-
-    const cancel = this.launchCancelControllers.get(recipeId);
-    if (!cancel) {
-      const currentState = this.lifecycleMachine.state;
-      if (currentState.recipeId !== recipeId) {
-        return { success: false, message: `No launch in progress for ${recipeId}` };
-      }
-      await this.evictCurrent();
-      this.lifecycleMachine.dispatch({ type: "CANCEL" }, undefined);
-      this.currentRecipe = null;
-      return { success: true, message: "Launch aborted via eviction" };
-    }
-    cancel.abort();
-    this.lifecycleMachine.dispatch({ type: "CANCEL" }, undefined);
-    await this.evictCurrent();
-    this.currentRecipe = null;
-    return { success: true, message: `Launch of ${recipeId} cancelled` };
-  }
-
   async ensureActive(
     recipe: Recipe,
     options: { force_evict?: boolean; publish_events?: boolean } = {}
   ): Promise<{ switched: boolean; error: string | null }> {
-    const startTs = Date.now();
     const existing = await this.deps.processManager.findInferenceProcess(this.deps.config.inference_port);
     if (existing && isRecipeRunning(recipe, existing)) {
       return { switched: false, error: null };
@@ -536,7 +305,11 @@ export class EngineCoordinator implements EngineService {
         );
       }
 
-      await this.evictCurrent();
+      const evictedRecipe = observedProcess ? this.findRecipeForProcess(observedProcess) : null;
+      await this.deps.processManager.evictModel(true);
+      if (evictedRecipe) {
+        this.abortRunsForRecipe(evictedRecipe);
+      }
       await delay(2000);
       const launch = await this.deps.processManager.launchModel(recipe);
       if (!launch.success) {
@@ -650,8 +423,6 @@ export class EngineCoordinator implements EngineService {
   listRuntimes(): Record<string, RuntimeInfo> {
     const llamacppInfo = getLlamacppRuntimeInfo(this.deps.config);
     const exllamav3Info = getExllamav3RuntimeInfo(this.deps.config);
-    const current = null; // sync is fine for basic info
-
     return {
       vllm: {
         installed: false,
