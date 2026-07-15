@@ -127,6 +127,44 @@ export const registerModelsRoutes: RouteRegistrar = (app, context) => {
       });
     }
 
+    for (const provider of context.config.providers) {
+      if (!provider.enabled || !provider.api_key) continue;
+      try {
+        const url = `${provider.base_url.replace(/\/+$/, "")}/v1/models`;
+        const res = await fetch(url, {
+          headers: { Authorization: `Bearer ${provider.api_key}` },
+          signal: AbortSignal.timeout(10_000),
+          cache: "no-store",
+        });
+        if (!res.ok) continue;
+        const data = (await res.json()) as {
+          data?: Array<{
+            id?: string;
+            max_model_len?: number;
+            meta?: { n_ctx?: number; n_ctx_train?: number };
+          }>;
+        };
+        for (const m of data.data ?? []) {
+          if (typeof m.id === "string" && m.id.length > 0) {
+            const ctxLen = m.max_model_len ?? m.meta?.n_ctx ?? m.meta?.n_ctx_train ?? 32768;
+            models.push({
+              id: `${provider.id}/${m.id}`,
+              object: "model",
+              created: now,
+              owned_by: provider.id,
+              active: false,
+              max_model_len: ctxLen,
+              metadata: {
+                vision: resolveModelVision({ identifiers: [m.id] }),
+              },
+            });
+          }
+        }
+      } catch {
+        // skip unreachable providers
+      }
+    }
+
     const payload: OpenAIModelList = { object: "list", data: models };
     return ctx.json(payload);
   });
