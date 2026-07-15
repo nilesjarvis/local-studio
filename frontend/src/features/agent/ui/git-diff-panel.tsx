@@ -5,6 +5,7 @@ import { ErrorBox, Button } from "@/ui";
 import type { GitAction, GitState } from "@/features/agent/contracts";
 import { safeJson } from "@/features/agent/safe-json";
 import { useMountSubscription } from "@/hooks/use-mount-subscription";
+import { effectInterval } from "@/lib/effect-timers";
 import {
   parseUnifiedDiff,
   type DiffFile,
@@ -148,7 +149,7 @@ function EmptyDiffPanel({ loading, status }: { loading: boolean; status: string[
 
 function useGitDiffPanelEffects(load: () => Promise<void>): void {
   useMountSubscription(() => {
-    void load();
+    effectInterval(() => void load().catch(() => {}), 2000);
   }, [load]);
 }
 
